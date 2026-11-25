@@ -51,8 +51,8 @@
     input?.focus();
   }
 
-  function search() {
-    results.start(invoke<Row[]>('search', { query }).then((found) => ({ rows: found })));
+  function search(text: string) {
+    results.start(invoke<Row[]>('search', { query: text }).then((found) => ({ rows: found })));
   }
 
   async function run(row: Row | undefined) {
@@ -116,7 +116,7 @@
         showing = 0;
         query = '';
         selected = 0;
-        search();
+        search('');
       }),
     ];
     openSession();
@@ -134,7 +134,7 @@
     <input
       bind:this={input}
       bind:value={query}
-      oninput={search}
+      oninput={(event) => search(event.currentTarget.value)}
       data-annotate="input-query"
       class="w-full shrink-0 bg-transparent px-5 py-4 text-xl outline-none placeholder:text-zinc-500"
       placeholder="Search commands"
