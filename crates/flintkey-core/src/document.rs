@@ -27,8 +27,11 @@ type Fields = Vec<(&'static str, Node)>;
 /// コマンドに必要なキー。既定値のものは含めない。
 fn fields(command: &Command) -> Fields {
     let mut out: Fields = vec![("title", Node::Text(command.title.clone()))];
-    if let Some(keyword) = &command.keyword {
-        out.push(("keyword", Node::Text(keyword.clone())));
+    if let Some(keywords) = one_or_many(&command.keywords) {
+        out.push(("keyword", keywords));
+    }
+    if let Some(hotkey) = &command.hotkey {
+        out.push(("hotkey", Node::Text(hotkey.clone())));
     }
     out.push(("type", Node::Text(command.action.type_name().to_string())));
     match &command.action {
@@ -58,11 +61,23 @@ fn fields(command: &Command) -> Fields {
     if command.pin {
         out.push(("pin", Node::Flag(true)));
     }
+    if !command.tags.is_empty() {
+        out.push(("tags", Node::List(command.tags.clone())));
+    }
     if !command.os.is_empty() {
         let names = command.os.iter().map(|os| os.name().to_string()).collect();
         out.push(("when", Node::Table(vec![("os", Node::List(names))])));
     }
     out
+}
+
+/// キーワードは 1 つなら文字列で書く。ほとんどのコマンドは 1 つで、手書きの形もそうなるため。
+fn one_or_many(items: &[String]) -> Option<Node> {
+    match items {
+        [] => None,
+        [one] => Some(Node::Text(one.clone())),
+        many => Some(Node::List(many.to_vec())),
+    }
 }
 
 struct Ordered<'a>(&'a Fields);
@@ -323,8 +338,10 @@ env:
     fn script(run: &str) -> Command {
         Command {
             title: "Deploy blog".into(),
-            keyword: Some("deploy".into()),
+            keywords: vec!["deploy".into()],
+            hotkey: None,
             pin: false,
+            tags: vec![],
             os: [].into(),
             action: Action::Script {
                 run: run.into(),
@@ -351,8 +368,10 @@ env:
         // Arrange
         let command = Command {
             title: "Deploy blog".into(),
-            keyword: Some("deploy".into()),
+            keywords: vec!["deploy".into()],
+            hotkey: None,
             pin: true,
+            tags: vec![],
             os: [Os::Macos, Os::Windows].into(),
             action: Action::Script {
                 run: "fab deploy".into(),
@@ -385,13 +404,99 @@ when:
     }
 
     #[test]
+    fn new_file_writes_aliases_hotkey_and_tags_in_the_fixed_order() {
+        // Arrange
+        let command = Command {
+            title: "Today".into(),
+            keywords: vec!["今日".into(), "today".into()],
+            hotkey: Some("ctrl+alt+cmd+t".into()),
+            pin: false,
+            tags: vec!["ytyng/コマンド".into()],
+            os: [Os::Macos].into(),
+            action: Action::App {
+                app: "/Applications/Clock.app".into(),
+                args: vec![],
+            },
+        };
+
+        // Act
+        let text = render(&command);
+
+        // Assert
+        assert_eq!(
+            text,
+            "\
+title: Today
+keyword:
+  - 今日
+  - today
+hotkey: ctrl+alt+cmd+t
+type: app
+app: /Applications/Clock.app
+tags:
+  - ytyng/コマンド
+when:
+  os:
+    - macos
+"
+        );
+        assert_eq!(parse_command(&text), Ok(command));
+    }
+
+    #[test]
+    fn tricky_keywords_and_tags_read_back() {
+        // Arrange
+        let words: Vec<String> = TRICKY.iter().map(ToString::to_string).collect();
+        let command = Command {
+            title: "T".into(),
+            keywords: words.clone(),
+            hotkey: None,
+            pin: false,
+            tags: words,
+            os: [].into(),
+            action: Action::Url {
+                url: "https://example.com".into(),
+            },
+        };
+
+        // Act
+        let rendered = render(&command);
+
+        // Assert
+        assert_eq!(parse_command(&rendered), Ok(command), "rendered as:\n{rendered}");
+    }
+
+    #[test]
+    fn adding_an_alias_hotkey_and_tag_keeps_the_rest_of_the_file() {
+        // Arrange
+        let source = "# mine\ntitle: A   # shown\nkeyword: a\ntype: url\nurl: https://example.com\npin: true\n";
+        let mut command = parse_command(source).unwrap();
+        command.keywords.push("b".into());
+        command.hotkey = Some("ctrl+alt+cmd+a".into());
+        command.tags = vec!["work".into()];
+
+        // Act
+        let updated = update(source, &command);
+
+        // Assert: 末尾に足したリストは、その場編集のライブラリが字下げせずに書く (YAML としては同じ意味)。
+        assert!(updated.kept_formatting, "{}", updated.text);
+        assert_eq!(
+            updated.text,
+            "# mine\ntitle: A   # shown\nkeyword:\n  - a\n  - b\nhotkey: ctrl+alt+cmd+a\ntype: url\nurl: https://example.com\npin: true\ntags:\n- work\n"
+        );
+        assert_eq!(parse_command(&updated.text), Ok(command));
+    }
+
+    #[test]
     fn new_file_reads_back_as_the_same_command_for_tricky_text() {
         for text in TRICKY {
             // Arrange
             let command = Command {
                 title: text.into(),
-                keyword: Some(text.into()),
+                keywords: vec![text.into()],
+                hotkey: None,
                 pin: false,
+                tags: vec![],
                 os: [].into(),
                 action: Action::Script {
                     run: text.into(),
@@ -436,8 +541,10 @@ when:
         for action in actions {
             let command = Command {
                 title: "T".into(),
-                keyword: None,
+                keywords: vec![],
+                hotkey: None,
                 pin: false,
+                tags: vec![],
                 os: [Os::Linux].into(),
                 action,
             };
@@ -566,7 +673,7 @@ when:
         // Arrange
         let source = "title: A\ntype: script\nrun: x\npin: true\n";
         let mut command = parse_command(source).unwrap();
-        command.keyword = Some("a".into());
+        command.keywords = vec!["a".into()];
         let Action::Script { cwd, env, .. } = &mut command.action else {
             unreachable!()
         };
@@ -813,8 +920,10 @@ when:
         let source = "# notes\ntitle: A\ntype: nope\n";
         let command = Command {
             title: "A".into(),
-            keyword: None,
+            keywords: vec![],
+            hotkey: None,
             pin: false,
+            tags: vec![],
             os: [].into(),
             action: Action::Url {
                 url: "https://example.com".into(),

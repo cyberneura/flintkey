@@ -13,12 +13,14 @@
 
 ```yaml
 title: Deploy blog
-keyword: deploy
+keyword: [deploy, blog]                     # 別名を持てる
+hotkey: ctrl+alt+cmd+d                      # 窓を出さずに直接実行する
 type: script
 run: fab deploy
 cwd: ~/workspace/blog
 env:
   GITHUB_TOKEN: op://Private/GitHub/token   # 実行時に 1Password CLI で解決する
+tags: [ytyng]                               # 設定 UI での分類用
 ```
 
 1 コマンド 1 ファイル。`type` は `url` / `app` / `script` / `terminal`。
@@ -57,7 +59,13 @@ pnpm -C apps/desktop local-deploy
 cargo run -p flintkey-core --example flintkey -- list [query]   # 順位付けした一覧と、壊れているファイル
 cargo run -p flintkey-core --example flintkey -- plan <id>      # 実行すると何が起きるか
 cargo run -p flintkey-core --example flintkey -- run <id>       # 実行する
+cargo run -p flintkey-core --example flintkey -- import-alfred  # Alfred のワークフローから作るコマンドの一覧
+cargo run -p flintkey-core --example flintkey -- import-alfred --write   # 実際に書く
 ```
+
+Alfred から移したホットキーは、Alfred 側も持ったままになる。macOS では、Alfred が使っているホットキーも
+エラーにならずに登録できてしまう (重なっていることを Flintkey は検出できない)。`--write` の前後で、
+Alfred のワークフローを無効にする。
 
 ## フォルダ
 

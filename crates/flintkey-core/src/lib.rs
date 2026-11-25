@@ -3,6 +3,7 @@
 //! ここにあるものはウインドウ無しで動く: 設定フォルダの読み書き、コマンドが何を起動するかの
 //! 決定、秘密情報の解決、検索結果の順位付け。デスクトップアプリはこの上の薄い層になる。
 
+pub mod alfred;
 pub mod command;
 pub mod diagnostic;
 pub mod launch;

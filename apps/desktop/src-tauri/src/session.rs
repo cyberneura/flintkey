@@ -16,7 +16,8 @@ const SETTINGS_FILE: &str = "settings.yaml";
 pub struct Row {
     pub id: String,
     pub title: String,
-    pub keyword: Option<String>,
+    pub keywords: Vec<String>,
+    pub hotkey: Option<String>,
     /// `url` / `app` / `script` / `terminal`。
     pub kind: &'static str,
     /// 何が起きるかを 1 行で示す文字列 (URL、アプリ名、コマンド)。
@@ -125,6 +126,14 @@ impl Session {
             .collect()
     }
 
+    /// ホットキーを持つコマンドの (id, ホットキー)。id の順。
+    pub fn hotkeys(&self) -> Vec<(String, String)> {
+        self.commands
+            .iter()
+            .filter_map(|stored| Some((stored.id.clone(), stored.command.hotkey.clone()?)))
+            .collect()
+    }
+
     /// `id` のコマンドを実行する計画を立てる。秘密情報には触れない。
     pub fn plan(&self, id: &str, shell: Option<&str>, path: Option<&str>) -> Result<Plan, String> {
         let stored = self
@@ -160,7 +169,8 @@ fn row(stored: &StoredCommand) -> Row {
     Row {
         id: stored.id.clone(),
         title: command.title.clone(),
-        keyword: command.keyword.clone(),
+        keywords: command.keywords.clone(),
+        hotkey: command.hotkey.clone(),
         kind: command.action.type_name(),
         detail,
     }
@@ -229,7 +239,8 @@ mod tests {
             Row {
                 id: "site".into(),
                 title: "Site".into(),
-                keyword: Some("s".into()),
+                keywords: vec!["s".into()],
+                hotkey: None,
                 kind: "url",
                 detail: "https://example.com".into(),
             }
@@ -365,6 +376,38 @@ mod tests {
         // Assert
         assert_eq!(session.problems(), Vec::<String>::new());
         assert_eq!(session.settings().display, flintkey_core::settings::Display::Primary);
+    }
+
+    #[test]
+    fn hotkeys_come_from_the_commands_of_this_os_in_id_order() {
+        // Arrange
+        let fixture = Fixture::new();
+        fixture.command(
+            "b",
+            "title: B\nhotkey: ctrl+alt+cmd+b\ntype: url\nurl: https://example.com\n",
+        );
+        fixture.command(
+            "a",
+            "title: A\nhotkey: ctrl+alt+cmd+a\ntype: url\nurl: https://example.com\n",
+        );
+        fixture.command("none", "title: N\ntype: url\nurl: https://example.com\n");
+        fixture.command(
+            "win",
+            "title: W\nhotkey: ctrl+alt+w\ntype: url\nurl: https://example.com\nwhen:\n  os: windows\n",
+        );
+        let mut session = fixture.session(Os::Macos);
+
+        // Act
+        session.reload_commands();
+
+        // Assert
+        assert_eq!(
+            session.hotkeys(),
+            [
+                ("a".to_string(), "ctrl+alt+cmd+a".to_string()),
+                ("b".to_string(), "ctrl+alt+cmd+b".to_string())
+            ]
+        );
     }
 
     #[test]

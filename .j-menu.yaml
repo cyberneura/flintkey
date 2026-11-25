@@ -8,7 +8,10 @@ menu:
 
   - title: Install the CLI (~/.cargo/bin)
     shell: cargo install --path crates/flintkey-core --example flintkey --locked
-    help: Build the flintkey CLI (list / plan / run) in release mode and install it in ~/.cargo/bin.
+    help: Build the flintkey CLI (list / plan / run / import-alfred) in release mode and install it in ~/.cargo/bin.
 
+  - title: Import from Alfred (dry run)
+    shell: cargo run -q -p flintkey-core --example flintkey -- import-alfred
+    help: List the commands that would be created from the Alfred workflows, and what cannot be converted. Writes nothing; add --write to create the files.
   - title: Clippy (deny warnings)
     shell: cargo clippy --workspace --all-targets -- -D warnings
