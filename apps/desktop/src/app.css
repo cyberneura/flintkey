@@ -1,0 +1,8 @@
+@import 'tailwindcss';
+
+/* 窓は透明で、見えるのはパネルだけ。配色はダークのみ。 */
+html,
+body {
+  background: transparent;
+  color-scheme: dark;
+}
