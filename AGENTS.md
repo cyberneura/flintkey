@@ -4,7 +4,9 @@
 
 ## 構成
 
-- `crates/flintkey-core`: 描画エンジンに依存しないコア。設定の読み書き・検証・アクション・秘密情報・検索。
+- `crates/flintkey-core`: 描画エンジンに依存しないコア。設定の読み書き・検証・アクション・秘密情報・検索・
+  Alfred からの変換 (`alfred.rs`。plist は CLI が `plutil` で JSON にして渡す)。
+  - `examples/flintkey.rs`: CLI (`list` / `plan` / `run` / `import-alfred`)。
 - `spikes/`: 設計判断の根拠にした実験。ワークスペースには含めない (`Cargo.toml` の `exclude`)。
   それぞれ独立した Cargo プロジェクトで、製品コードから参照しない。
 - `apps/desktop`: デスクトップアプリ (Tauri 2 + Svelte 5 + Tailwind 4)。コアを呼ぶ薄い層。
@@ -12,6 +14,7 @@
   - `src-tauri/src/placement.rs`: 窓を置く位置の計算 (純粋な関数)。
   - `src-tauri/src/session.rs`: 窓に依存しない状態 (読み込み、検索、実行の計画)。
   - `src-tauri/src/showing.rs`: 表示ごとの番号と、実行要求の受け付け (純粋な状態)。
+  - `src-tauri/src/hotkeys.rs`: 設定のホットキーから、登録するショートカットの組を決める (純粋な関数)。
   - `src-tauri/src/panel.rs`: macOS で窓を NSPanel に差し替える。
   - `src/`: ランチャー窓のページ。キーの解釈は `src/lib/keys.ts`。
 
@@ -27,7 +30,7 @@ pnpm -C apps/desktop check
 
 `cargo` のコマンドはページをビルドしていなくても通る (開発用ビルドはページを埋め込まない)。
 
-`.j-menu.yaml` に Tauri dev / Local deploy / CLI のインストール / clippy を登録してある。
+`.j-menu.yaml` に Tauri dev / Local deploy / CLI のインストール / Alfred からの移行 (書き込まない一覧) / clippy を登録してある。
 Local deploy (`apps/desktop/scripts/local-deploy.sh`) は `.app` をビルドし、Developer ID 署名・Apple 公証・staple の
 検証後に `/Applications` に置く。公証には Keychain の `cyberneura-notary` (`NOTARY_PROFILE` で変更可) を使い、
 失敗時は既存のアプリを置き換えない。置き場所は `DEST_DIR` で変えられる。署名は Cyberneura の Developer ID に

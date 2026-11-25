@@ -8,7 +8,8 @@
   interface Row {
     id: string;
     title: string;
-    keyword: string | null;
+    keywords: string[];
+    hotkey: string | null;
     kind: string;
     detail: string;
   }
@@ -161,17 +162,22 @@
             <div class="flex min-w-0 flex-1 flex-col">
               <div class="flex items-center gap-2">
                 <span class="truncate">{row.title}</span>
-                {#if row.keyword}
+                {#each row.keywords as keyword (keyword)}
                   <span
                     class="shrink-0 rounded bg-zinc-700 px-1.5 text-xs text-zinc-300"
                   >
-                    {row.keyword}
+                    {keyword}
                   </span>
-                {/if}
+                {/each}
               </div>
               <span class="truncate text-xs text-zinc-400">{row.detail}</span>
             </div>
-            <span class="shrink-0 text-xs text-zinc-500">{row.kind}</span>
+            <div class="flex shrink-0 flex-col items-end gap-0.5">
+              <span class="text-xs text-zinc-500">{row.kind}</span>
+              {#if row.hotkey}
+                <span class="font-mono text-xs text-zinc-500">{row.hotkey}</span>
+              {/if}
+            </div>
           </li>
         {/each}
       </ul>

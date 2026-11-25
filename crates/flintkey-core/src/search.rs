@@ -53,13 +53,20 @@ impl Searcher {
         let lowered_query = query.to_lowercase();
         let mut matched: Vec<(Tier, Reverse<u32>, usize)> = Vec::new();
         for (index, stored) in commands.iter().enumerate() {
-            let keyword = stored.command.keyword.as_deref().map(str::to_lowercase);
+            let keywords: Vec<String> = stored.command.keywords.iter().map(|k| k.to_lowercase()).collect();
             let mut score = |text: &str| pattern.score(Utf32Str::new(text, &mut self.buffer), &mut self.matcher);
-            let fuzzy = score(&stored.command.title).max(keyword.as_deref().and_then(&mut score));
-            let tier = match keyword.as_deref() {
-                Some(keyword) if keyword == lowered_query => Some(Tier::KeywordExact),
-                Some(keyword) if keyword.starts_with(&lowered_query) => Some(Tier::KeywordPrefix),
-                _ => fuzzy.map(|_| Tier::Fuzzy),
+            let title_score = score(&stored.command.title);
+            let fuzzy = keywords
+                .iter()
+                .filter_map(|keyword| score(keyword))
+                .chain(title_score)
+                .max();
+            let tier = if keywords.contains(&lowered_query) {
+                Some(Tier::KeywordExact)
+            } else if keywords.iter().any(|keyword| keyword.starts_with(&lowered_query)) {
+                Some(Tier::KeywordPrefix)
+            } else {
+                fuzzy.map(|_| Tier::Fuzzy)
             };
             if let Some(tier) = tier {
                 // 一致の質で並べるのは、あいまい一致の層だけ。キーワード一致の層は使用回数で決まる。
@@ -82,8 +89,12 @@ mod tests {
             id: id.into(),
             command: Command {
                 title: title.into(),
-                keyword: keyword.map(Into::into),
+                keywords: keyword
+                    .map(|keyword| keyword.split('|').map(Into::into).collect())
+                    .unwrap_or_default(),
+                hotkey: None,
                 pin,
+                tags: vec![],
                 os: [].into(),
                 action: Action::Url {
                     url: "https://example.com".into(),
@@ -194,6 +205,24 @@ mod tests {
         // Assert
         assert_eq!(by_quality, ["near", "far"]);
         assert_eq!(by_use, ["twin-b", "twin-a"]);
+    }
+
+    #[test]
+    fn any_of_the_keywords_counts_as_the_keyword() {
+        // Arrange: Alfred の `a||b` から移した別名。2 つ目の別名でも最優先で選ばれる。
+        let commands = [
+            command("title", "today report", None, false),
+            command("alias", "日付を貼る", Some("今日|today"), false),
+            command("prefix", "Toggle", Some("tomorrow|todayish"), false),
+        ];
+
+        // Act
+        let exact = ranked(&commands, &Usage::default(), "today");
+        let first = ranked(&commands, &Usage::default(), "今日");
+
+        // Assert
+        assert_eq!(exact, ["alias", "prefix", "title"]);
+        assert_eq!(first, ["alias"]);
     }
 
     #[test]

@@ -247,6 +247,11 @@ fn terminal_process(run: &str, cwd: Option<&str>, machine: &Machine) -> Result<P
 }
 
 fn app_plan(app: &str, args: &[String], machine: &Machine) -> Plan {
+    // アプリはシェルを通さずに渡すので、`~/` はここで展開しないと名前の一部として扱われる。
+    let expanded = app
+        .starts_with("~/")
+        .then(|| expand_home(app, machine.home).display().to_string());
+    let app = expanded.as_deref().unwrap_or(app);
     match machine.os {
         Os::Macos => {
             let mut open_args = vec!["-a".to_string(), app.to_string()];
@@ -453,6 +458,33 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn app_under_the_home_folder_is_expanded_on_every_system() {
+        // Arrange
+        let action = Action::App {
+            app: "~/workspace/tool/Tool.app".into(),
+            args: vec![],
+        };
+
+        // Act
+        let mac = spawned(plan(&action, &machine(Os::Macos)).unwrap());
+        let linux = spawned(plan(&action, &machine(Os::Linux)).unwrap());
+        let windows = plan(&action, &machine(Os::Windows)).unwrap();
+
+        // Assert
+        assert_eq!(mac.args, strings(&["-a", "/home/me/workspace/tool/Tool.app"]));
+        assert_eq!(linux.program, "/home/me/workspace/tool/Tool.app");
+        assert_eq!(
+            windows,
+            Plan::Open {
+                target: Path::new("/home/me")
+                    .join("workspace/tool/Tool.app")
+                    .display()
+                    .to_string()
+            }
+        );
     }
 
     #[test]

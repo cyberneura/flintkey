@@ -209,8 +209,10 @@ mod tests {
     fn url_command(title: &str, url: &str) -> Command {
         Command {
             title: title.into(),
-            keyword: None,
+            keywords: vec![],
+            hotkey: None,
             pin: false,
+            tags: vec![],
             os: [].into(),
             action: Action::Url { url: url.into() },
         }

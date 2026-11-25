@@ -1,6 +1,6 @@
 //! コマンドのモデルと、コマンドファイルが満たすべきルール。
 //!
-//! コマンドファイルはフラットな YAML で、共通キー (`title` `keyword` `pin` `when`) と
+//! コマンドファイルはフラットな YAML で、共通キー (`title` `keyword` `hotkey` `pin` `tags` `when`) と
 //! `type` ごとのキーを持つ。全フィールドを Option にした鏡の構造体で読み込む。
 //! serde が最初に見つけた 1 件で止まらず、ルール違反をすべて行番号付きで報告するため。
 
@@ -14,10 +14,14 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Command {
     pub title: String,
-    /// 完全一致で入力すると、このコマンドが最優先で選ばれる短い語。
-    pub keyword: Option<String>,
+    /// 完全一致で入力すると、このコマンドが最優先で選ばれる短い語。書かれた順。
+    pub keywords: Vec<String>,
+    /// このコマンドを直接実行するグローバルショートカット。書式はデスクトップアプリが検証する。
+    pub hotkey: Option<String>,
     /// 検索欄が空のとき、ピン留めしたコマンドを先頭に並べる。
     pub pin: bool,
+    /// 設定 UI で絞り込み・まとめるための分類。書かれた順。検索の対象ではない。
+    pub tags: Vec<String>,
     /// このコマンドを出す OS。空ならすべての OS。
     pub os: BTreeSet<Os>,
     pub action: Action,
@@ -110,7 +114,9 @@ pub(crate) const TYPE_KEYS: [(&str, &[&str]); 6] = [
 #[serde(deny_unknown_fields)]
 struct RawCommand {
     title: Option<Spanned<String>>,
-    keyword: Option<Spanned<String>>,
+    keyword: Option<Spanned<OneOrMany>>,
+    hotkey: Option<Spanned<String>>,
+    tags: Option<Spanned<OneOrMany>>,
     #[serde(rename = "type")]
     kind: Option<Spanned<String>>,
     url: Option<Spanned<String>>,
@@ -119,7 +125,7 @@ struct RawCommand {
     run: Option<Spanned<String>>,
     cwd: Option<Spanned<String>>,
     env: Option<Spanned<BTreeMap<String, String>>>,
-    pin: Option<Spanned<bool>>,
+    pin: Option<Spanned<Flag>>,
     when: Option<RawWhen>,
 }
 
@@ -130,7 +136,47 @@ struct RawWhen {
 }
 
 /// `os: macos` と `os: [macos, windows]` の両方を受け付ける。
-struct OneOrMany(Vec<String>);
+///
+/// 1 つか複数かは値の形を見て決める。値の形で決める読み方では、YAML 1.1 の流儀だと `on` や `y` が
+/// 真偽値になってしまうので、[`parse_command`] は YAML 1.2 の真偽値 (`true` / `false`) だけを
+/// 真偽値として扱う設定で読む。それでも `1.0` `+1` `true` は数や真偽値として届き、書かれた文字が
+/// 失われる (`1.0` は `1` になる)。その場合は `typed` を立て、呼び出し側がファイルの文字を取り直す。
+struct OneOrMany {
+    names: Vec<String>,
+    typed: bool,
+}
+
+impl OneOrMany {
+    fn typed(value: impl ToString) -> Self {
+        Self {
+            names: vec![value.to_string()],
+            typed: true,
+        }
+    }
+}
+
+/// 値の形を見て読んだために失われた文字を、ファイルのテキストから取り直す。
+fn as_written(value: Spanned<OneOrMany>, source: &str) -> Spanned<OneOrMany> {
+    if !value.value.typed {
+        return value;
+    }
+    let span = value.referenced.span();
+    let written = span.byte_offset().zip(span.byte_len()).and_then(|(start, len)| {
+        let start = usize::try_from(start).ok()?;
+        let end = start.checked_add(usize::try_from(len).ok()?)?;
+        source.get(start..end)
+    });
+    match written.map(str::trim) {
+        Some(text) if !text.is_empty() => Spanned {
+            value: OneOrMany {
+                names: vec![text.to_string()],
+                typed: false,
+            },
+            ..value
+        },
+        _ => value,
+    }
+}
 
 impl<'de> Deserialize<'de> for OneOrMany {
     fn deserialize<D: de::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -144,7 +190,26 @@ impl<'de> Deserialize<'de> for OneOrMany {
             }
 
             fn visit_str<E: de::Error>(self, value: &str) -> Result<OneOrMany, E> {
-                Ok(OneOrMany(vec![value.to_string()]))
+                Ok(OneOrMany {
+                    names: vec![value.to_string()],
+                    typed: false,
+                })
+            }
+
+            fn visit_i64<E: de::Error>(self, value: i64) -> Result<OneOrMany, E> {
+                Ok(OneOrMany::typed(value))
+            }
+
+            fn visit_u64<E: de::Error>(self, value: u64) -> Result<OneOrMany, E> {
+                Ok(OneOrMany::typed(value))
+            }
+
+            fn visit_f64<E: de::Error>(self, value: f64) -> Result<OneOrMany, E> {
+                Ok(OneOrMany::typed(value))
+            }
+
+            fn visit_bool<E: de::Error>(self, value: bool) -> Result<OneOrMany, E> {
+                Ok(OneOrMany::typed(value))
             }
 
             fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<OneOrMany, A::Error> {
@@ -152,11 +217,45 @@ impl<'de> Deserialize<'de> for OneOrMany {
                 while let Some(name) = seq.next_element::<String>()? {
                     names.push(name);
                 }
-                Ok(OneOrMany(names))
+                Ok(OneOrMany { names, typed: false })
             }
         }
 
         deserializer.deserialize_any(OneOrManyVisitor)
+    }
+}
+
+/// 真偽値。手書きする人のために `yes` / `no` / `on` / `off` も受け付ける。
+///
+/// 読み込みを YAML 1.2 の真偽値だけにしているので、それ以外の綴りは文字列として届く。
+/// 引用符で囲んだ `"true"` も文字列として届く。
+struct Flag(bool);
+
+impl<'de> Deserialize<'de> for Flag {
+    fn deserialize<D: de::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct FlagVisitor;
+
+        impl Visitor<'_> for FlagVisitor {
+            type Value = Flag;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("true or false")
+            }
+
+            fn visit_bool<E: de::Error>(self, value: bool) -> Result<Flag, E> {
+                Ok(Flag(value))
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Flag, E> {
+                match value.to_ascii_lowercase().as_str() {
+                    "true" | "yes" | "y" | "on" => Ok(Flag(true)),
+                    "false" | "no" | "n" | "off" => Ok(Flag(false)),
+                    _ => Err(E::invalid_value(de::Unexpected::Str(value), &self)),
+                }
+            }
+        }
+
+        deserializer.deserialize_any(FlagVisitor)
     }
 }
 
@@ -179,7 +278,25 @@ fn non_blank(key: &str, value: Option<Spanned<String>>, problems: &mut Vec<Diagn
     Some(value.value)
 }
 
-fn has_url_scheme(url: &str) -> bool {
+/// 文字列のリストを取り出す。空白だけの値と重複は問題として報告する。
+fn non_blank_list(key: &str, value: Option<Spanned<OneOrMany>>, problems: &mut Vec<Diagnostic>) -> Vec<String> {
+    let Some(value) = value else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = Vec::new();
+    for item in &value.value.names {
+        if item.trim().is_empty() {
+            problems.push(problem_at(&value, format!("`{key}` must not be empty")));
+        } else if out.contains(item) {
+            problems.push(problem_at(&value, format!("`{key}` lists `{item}` twice")));
+        } else {
+            out.push(item.clone());
+        }
+    }
+    out
+}
+
+pub(crate) fn has_url_scheme(url: &str) -> bool {
     let Some((scheme, _)) = url.split_once(':') else {
         return false;
     };
@@ -190,7 +307,9 @@ fn has_url_scheme(url: &str) -> bool {
 
 /// コマンドファイルを 1 つ読む。最初の 1 件だけでなく、見つかったルール違反をすべて返す。
 pub fn parse_command(source: &str) -> Result<Command, Vec<Diagnostic>> {
-    let raw: RawCommand = match serde_saphyr::from_str::<Option<RawCommand>>(source) {
+    let mut options = serde_saphyr::Options::default();
+    options.strict_booleans = true;
+    let raw: RawCommand = match serde_saphyr::from_str_with_options::<Option<RawCommand>>(source, options) {
         Ok(Some(raw)) => raw,
         Ok(None) => {
             return Err(vec![Diagnostic::file(
@@ -205,7 +324,13 @@ pub fn parse_command(source: &str) -> Result<Command, Vec<Diagnostic>> {
         problems.push(Diagnostic::file("`title` is required"));
     }
     let title = non_blank("title", raw.title, &mut problems);
-    let keyword = non_blank("keyword", raw.keyword, &mut problems);
+    let keywords = non_blank_list(
+        "keyword",
+        raw.keyword.map(|value| as_written(value, source)),
+        &mut problems,
+    );
+    let hotkey = non_blank("hotkey", raw.hotkey, &mut problems);
+    let tags = non_blank_list("tags", raw.tags.map(|value| as_written(value, source)), &mut problems);
 
     let kind = match &raw.kind {
         None => {
@@ -317,7 +442,7 @@ pub fn parse_command(source: &str) -> Result<Command, Vec<Diagnostic>> {
 
     let mut os = BTreeSet::new();
     if let Some(names) = raw.when.and_then(|when| when.os) {
-        for name in &names.value.0 {
+        for name in &names.value.names {
             match Os::from_name(name) {
                 Some(found) => {
                     os.insert(found);
@@ -333,8 +458,10 @@ pub fn parse_command(source: &str) -> Result<Command, Vec<Diagnostic>> {
     match (title, action) {
         (Some(title), Some(action)) if problems.is_empty() => Ok(Command {
             title,
-            keyword,
-            pin: raw.pin.is_some_and(|pin| pin.value),
+            keywords,
+            hotkey,
+            pin: raw.pin.is_some_and(|pin| pin.value.0),
+            tags,
             os,
             action,
         }),
@@ -363,7 +490,8 @@ mod tests {
         let source = "\
 # Deploy the blog
 title: Deploy blog   # shown in the list
-keyword: deploy
+keyword: [deploy, blog]
+hotkey: ctrl+alt+cmd+d
 type: script
 run: fab deploy
 cwd: ~/workspace/blog
@@ -371,6 +499,7 @@ env:
   GITHUB_TOKEN: op://Private/GitHub/token
   STAGE: prod
 pin: true
+tags: [ytyng, 公開]
 when:
   os: [windows, macos]
 ";
@@ -383,8 +512,10 @@ when:
             command,
             Command {
                 title: "Deploy blog".into(),
-                keyword: Some("deploy".into()),
+                keywords: vec!["deploy".into(), "blog".into()],
+                hotkey: Some("ctrl+alt+cmd+d".into()),
                 pin: true,
+                tags: vec!["ytyng".into(), "公開".into()],
                 os: [Os::Macos, Os::Windows].into(),
                 action: Action::Script {
                     run: "fab deploy".into(),
@@ -445,7 +576,9 @@ when:
             assert_eq!(command.action, expected, "source: {source}");
             assert!(!command.pin);
             assert!(command.os.is_empty());
-            assert_eq!(command.keyword, None);
+            assert!(command.keywords.is_empty());
+            assert_eq!(command.hotkey, None);
+            assert!(command.tags.is_empty());
         }
     }
 
@@ -482,7 +615,7 @@ when:
 
         // Assert
         assert_eq!(command.title, "no");
-        assert_eq!(command.keyword.as_deref(), Some("on"));
+        assert_eq!(command.keywords, ["on"]);
         assert_eq!(
             command.action,
             Action::Script {
@@ -491,6 +624,92 @@ when:
                 env: BTreeMap::new()
             }
         );
+    }
+
+    #[test]
+    fn keyword_aliases_and_tags_keep_their_order_and_stay_text() {
+        // Arrange: 値の形で読むキーでも、YAML 1.1 で真偽値や数になる語は文字列のまま。
+        let source = "title: A\nkeyword: [today, on, y, 1, 'no']\ntype: url\nurl: https://example.com\ntags: off\n";
+
+        // Act
+        let command = parse_command(source).unwrap();
+
+        // Assert
+        assert_eq!(command.keywords, ["today", "on", "y", "1", "no"]);
+        assert_eq!(command.tags, ["off"]);
+    }
+
+    #[test]
+    fn single_words_that_yaml_1_1_treats_as_booleans_or_numbers_stay_text() {
+        for word in [
+            "on", "off", "y", "n", "yes", "true", "False", "1", "1.5", "1.0", "+1", "007", "0x1F", "1e3",
+        ] {
+            // Arrange
+            let source = format!("title: A\nkeyword: {word}\ntype: url\nurl: https://example.com\ntags: {word}\n");
+
+            // Act
+            let command = parse_command(&source).unwrap();
+
+            // Assert
+            assert_eq!(command.keywords, [word], "keyword {word}");
+            assert_eq!(command.tags, [word], "tag {word}");
+        }
+    }
+
+    #[test]
+    fn pin_accepts_the_yes_and_no_spellings() {
+        for (word, expected) in [
+            ("true", true),
+            ("\"true\"", true),
+            ("Yes", true),
+            ("on", true),
+            ("y", true),
+            ("false", false),
+            ("'false'", false),
+            ("no", false),
+            ("OFF", false),
+        ] {
+            // Arrange
+            let source = format!("title: A\ntype: url\nurl: https://example.com\npin: {word}\n");
+
+            // Act
+            let command = parse_command(&source).unwrap();
+
+            // Assert
+            assert_eq!(command.pin, expected, "pin: {word}");
+        }
+    }
+
+    #[test]
+    fn blank_and_repeated_keywords_and_tags_are_rejected() {
+        // Arrange
+        let source = "title: A\nkeyword: [a, '', a]\nhotkey: ' '\ntype: url\nurl: https://example.com\ntags: [x, x]\n";
+
+        // Act
+        let found = messages(source);
+
+        // Assert
+        assert_eq!(
+            found,
+            [
+                "line 2, column 10: `keyword` must not be empty",
+                "line 2, column 10: `keyword` lists `a` twice",
+                "line 3, column 9: `hotkey` must not be empty",
+                "line 6, column 7: `tags` lists `x` twice",
+            ]
+        );
+    }
+
+    #[test]
+    fn hotkey_is_kept_as_written() {
+        // Arrange
+        let source = "title: A\nhotkey: Ctrl+Alt+Cmd+C\ntype: app\napp: Slack\n";
+
+        // Act
+        let command = parse_command(source).unwrap();
+
+        // Assert
+        assert_eq!(command.hotkey.as_deref(), Some("Ctrl+Alt+Cmd+C"));
     }
 
     #[test]

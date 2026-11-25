@@ -3,6 +3,7 @@
 // リリースビルドの Windows でコンソール窓を出さない。
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod hotkeys;
 #[cfg(target_os = "macos")]
 mod panel;
 mod placement;
@@ -10,9 +11,10 @@ mod session;
 mod showing;
 
 use flintkey_core::Os;
-use flintkey_core::launch;
+use flintkey_core::launch::{self, Plan};
 use flintkey_core::paths;
 use flintkey_core::secrets::OnePassword;
+use hotkeys::{Registered, Target};
 use placement::{Monitor, Position, Rect};
 use serde::Serialize;
 use session::{Row, Session};
@@ -35,8 +37,7 @@ const EVENT_HIDDEN: &str = "launcher-hidden";
 
 struct AppState {
     session: Mutex<Session>,
-    /// 登録できているホットキー。
-    hotkey: Mutex<Option<Shortcut>>,
+    hotkeys: Mutex<Registry>,
     /// 窓を隠したあとに起きた失敗。次に窓を出したときに見せる。
     notices: Mutex<Vec<String>>,
     showing: Mutex<Showing>,
@@ -45,6 +46,21 @@ struct AppState {
     /// 窓をキー入力を受け取れるパネルに変えられたか。
     #[cfg(target_os = "macos")]
     panel: AtomicBool,
+}
+
+/// 登録できているホットキー。
+#[derive(Default)]
+struct Registry {
+    /// ショートカット → 押したときに起きることと、設定に書かれていた文字列。
+    registered: Registered,
+    /// 最後に登録し直したときの問題 (読めない、重なっている、登録できない)。
+    problems: Vec<String>,
+}
+
+impl Registry {
+    fn has_launcher(&self) -> bool {
+        self.registered.values().any(|(target, _)| *target == Target::Launcher)
+    }
 }
 
 /// 窓を出すたびにページへ渡す内容。
@@ -58,11 +74,11 @@ struct View {
 }
 
 #[tauri::command]
-fn open_session(app: AppHandle, state: State<'_, AppState>, query: String) -> View {
+fn open_session(state: State<'_, AppState>, query: String) -> View {
     let mut problems = std::mem::take(&mut *state.notices.lock().unwrap());
-    problems.extend(hotkey_problem(&app));
+    problems.extend(state.hotkeys.lock().unwrap().problems.iter().cloned());
+    // コマンドは窓を出したときに読み直してある (`sync_hotkeys`)。
     let mut session = state.session.lock().unwrap();
-    session.reload_commands();
     problems.extend(session.problems());
     View {
         rows: session.search(&query),
@@ -86,14 +102,7 @@ fn run(app: AppHandle, state: State<'_, AppState>, id: String, showing: u64) -> 
     if !state.showing.lock().unwrap().claim(showing) {
         return Ok(());
     }
-    let shell = std::env::var("SHELL").ok();
-    let path = std::env::var("PATH").ok();
-    let plan = state
-        .session
-        .lock()
-        .unwrap()
-        .plan(&id, shell.as_deref(), path.as_deref());
-    let plan = match plan {
+    let plan = match plan_command(&state, &id) {
         Ok(plan) => plan,
         Err(message) => {
             // 窓は開いたまま。別のコマンドを選び直せるようにする。
@@ -103,26 +112,59 @@ fn run(app: AppHandle, state: State<'_, AppState>, id: String, showing: u64) -> 
     };
     hide_launcher(&app);
 
-    std::thread::spawn(move || {
-        let state = app.state::<AppState>();
-        match launch::execute(&plan, &OnePassword::locate()) {
-            Ok(()) => {
-                // コマンドはもう起動している。記録の失敗で利用者を止めない。
-                if let Err(error) = state.session.lock().unwrap().record_use(&id) {
-                    eprintln!("could not record the use of `{id}`: {error}");
-                }
-            }
-            Err(error) => {
-                state
-                    .notices
-                    .lock()
-                    .unwrap()
-                    .push(format!("`{id}` did not start: {error}"));
-                show_launcher(&app, Focus::Leave);
+    std::thread::spawn(move || execute_and_record(&app, &id, &plan));
+    Ok(())
+}
+
+fn plan_command(state: &AppState, id: &str) -> Result<Plan, String> {
+    let shell = std::env::var("SHELL").ok();
+    let path = std::env::var("PATH").ok();
+    state
+        .session
+        .lock()
+        .unwrap()
+        .plan(id, shell.as_deref(), path.as_deref())
+}
+
+/// 計画を実行し、使ったことを記録する。失敗は知らせで見せる。1Password の認証を待つことがあるので、
+/// メインスレッドから呼ばない。
+fn execute_and_record(app: &AppHandle, id: &str, plan: &Plan) {
+    let state = app.state::<AppState>();
+    match launch::execute(plan, &OnePassword::locate()) {
+        Ok(()) => {
+            // コマンドはもう起動している。記録の失敗で利用者を止めない。
+            if let Err(error) = state.session.lock().unwrap().record_use(id) {
+                eprintln!("could not record the use of `{id}`: {error}");
             }
         }
-    });
-    Ok(())
+        Err(error) => notify(app, format!("`{id}` did not start: {error}")),
+    }
+}
+
+/// 知らせを積み、キー入力を奪わずに窓で見せる。
+fn notify(app: &AppHandle, notice: String) {
+    app.state::<AppState>().notices.lock().unwrap().push(notice);
+    show_launcher(app, Focus::Leave);
+}
+
+/// ホットキーが押された。メインスレッド以外から呼ぶ (コマンドの実行は 1Password の認証を待つことがある)。
+fn fire(app: &AppHandle, shortcut: Shortcut) {
+    let state = app.state::<AppState>();
+    let target = state
+        .hotkeys
+        .lock()
+        .unwrap()
+        .registered
+        .get(&shortcut)
+        .map(|(target, _)| target.clone());
+    match target {
+        Some(Target::Launcher) => toggle_launcher(app),
+        Some(Target::Command(id)) => match plan_command(&state, &id) {
+            Ok(plan) => execute_and_record(app, &id, &plan),
+            Err(message) => notify(app, format!("hotkey for `{id}`: {message}")),
+        },
+        None => {}
+    }
 }
 
 #[tauri::command]
@@ -130,43 +172,26 @@ fn hide(app: AppHandle) {
     hide_launcher(&app);
 }
 
-/// 設定のホットキーが使えていない場合の説明。
-fn hotkey_problem(app: &AppHandle) -> Option<String> {
+/// コマンドを読み直し、ランチャーとコマンドのホットキーを登録し直す。メインスレッドから呼ぶ
+/// (登録はメインスレッドの応答を待つので、別スレッドからだとロックを持ったまま互いに止まりうる)。
+fn sync_hotkeys(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let wanted = state.session.lock().unwrap().settings().hotkey.clone();
-    let reason = match wanted.parse::<Shortcut>() {
-        Ok(shortcut) if *state.hotkey.lock().unwrap() == Some(shortcut) => return None,
-        Ok(_) => "could not be registered (another application may be using it)".to_string(),
-        Err(error) => error.to_string(),
-    };
-    Some(format!("hotkey `{wanted}`: {reason}"))
-}
-
-/// `settings.yaml` を読み直し、ホットキーが変わっていれば登録し直す。
-fn sync_settings(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    let wanted = {
+    let (launcher, commands) = {
         let mut session = state.session.lock().unwrap();
-        session.reload_settings();
-        session.settings().hotkey.clone()
+        session.reload_commands();
+        (session.settings().hotkey.clone(), session.hotkeys())
     };
-    let Ok(shortcut) = wanted.parse::<Shortcut>() else {
-        // 読めないホットキーに書き換えられても、今のホットキーは残す (窓を出して直せるように)。
-        return;
-    };
-    let mut registered = state.hotkey.lock().unwrap();
-    // 文字列ではなく意味で比べる。`Alt+Space` と `alt+space` は同じホットキーで、登録し直すと失敗する。
-    if *registered == Some(shortcut) {
-        return;
-    }
+    let wanted = hotkeys::wanted(&launcher, &commands);
     let shortcuts = app.global_shortcut();
-    // 新しい方を先に登録する。失敗しても今のホットキーが残る。
-    if shortcuts.register(shortcut).is_err() {
-        return;
-    }
-    if let Some(previous) = registered.replace(shortcut) {
-        let _ = shortcuts.unregister(previous);
-    }
+    let mut registry = state.hotkeys.lock().unwrap();
+    registry.problems = hotkeys::apply(
+        &mut registry.registered,
+        wanted,
+        |shortcut| shortcuts.register(shortcut).is_ok(),
+        |shortcut| {
+            let _ = shortcuts.unregister(shortcut);
+        },
+    );
 }
 
 fn rect(position: PhysicalPosition<i32>, size: tauri::PhysicalSize<u32>) -> Rect {
@@ -228,7 +253,7 @@ fn show_launcher_on_main(app: &AppHandle, focus: Focus) {
         // 通常の窓は、出すだけでキー入力を奪う。知らせは、次に利用者が窓を出したときに見せる。
         return;
     }
-    sync_settings(app);
+    app.state::<AppState>().session.lock().unwrap().reload_settings();
     match launcher_position(app) {
         Some(Position::Logical { x, y }) => {
             let _ = window.set_position(LogicalPosition::new(x, y));
@@ -248,6 +273,9 @@ fn show_launcher_on_main(app: &AppHandle, focus: Focus) {
         if visible { showing.id() } else { showing.begin() }
     };
     let _ = window.emit(EVENT_SHOWN, id);
+    // コマンドの読み直しは窓を出したあとに行う (数百件あると、出るまでの時間に響く)。
+    // ページが一覧を求めるのはこの関数を抜けたあとなので、一覧には読み直した結果が出る。
+    sync_hotkeys(app);
 }
 
 /// キー入力を奪わずに窓を出せるか。パネルにできた macOS だけ。
@@ -391,7 +419,7 @@ fn main() {
     let state_dir = paths::state_dir().expect("the user has a home directory");
     let state = AppState {
         session: Mutex::new(Session::new(config_dir, &state_dir, home, Os::current())),
-        hotkey: Mutex::new(None),
+        hotkeys: Mutex::new(Registry::default()),
         notices: Mutex::new(Vec::new()),
         showing: Mutex::new(Showing::default()),
         has_key: AtomicBool::new(false),
@@ -406,13 +434,14 @@ fn main() {
         }))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
+                .with_handler(|app, shortcut, event| {
                     if event.state() == ShortcutState::Pressed {
                         // macOS のメディアキーでは、ライブラリが自分のロックを持ったままここを呼ぶ。
                         // この場でホットキーを登録し直すと同じロックを取りに行って止まるので、
-                        // 別スレッドを経由して、ハンドラを抜けたあとのメインスレッドで処理する。
+                        // 別スレッドを経由する (窓の操作はそこからメインスレッドへ回す)。
                         let app = app.clone();
-                        std::thread::spawn(move || toggle_launcher(&app));
+                        let shortcut = *shortcut;
+                        std::thread::spawn(move || fire(&app, shortcut));
                     }
                 })
                 .build(),
@@ -432,9 +461,10 @@ fn main() {
                 app.state::<AppState>().panel.store(converted, Ordering::Relaxed);
             }
             build_tray(app.handle())?;
-            sync_settings(app.handle());
-            // ホットキーが使えないと窓を出す手段に気づけないので、最初に窓で知らせる。
-            if hotkey_problem(app.handle()).is_some() {
+            app.state::<AppState>().session.lock().unwrap().reload_settings();
+            sync_hotkeys(app.handle());
+            // ランチャーのホットキーが使えないと窓を出す手段に気づけないので、最初に窓で知らせる。
+            if !app.state::<AppState>().hotkeys.lock().unwrap().has_launcher() {
                 show_launcher(app.handle(), Focus::Leave);
             }
             Ok(())
