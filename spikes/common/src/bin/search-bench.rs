@@ -1,4 +1,4 @@
-//! 画面なしで測れる部分の確認: あいまい検索そのものは 1 フレームより十分に短いか。
+//! Checks the part that can be measured without a screen: is the fuzzy search itself well under one frame?
 
 use spike_common::{items, time_search, us, Searcher};
 

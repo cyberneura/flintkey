@@ -1,5 +1,5 @@
 #!/bin/bash
-# 署名済みの .app を、notarytool が Keychain に保存した認証情報で公証する。
+# Notarizes a signed .app using credentials notarytool saved in the Keychain.
 set -euo pipefail
 
 if [ "$#" -ne 2 ]; then

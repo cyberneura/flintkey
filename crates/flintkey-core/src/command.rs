@@ -1,8 +1,8 @@
-//! コマンドのモデルと、コマンドファイルが満たすべきルール。
+//! The command model and the rules a command file must follow.
 //!
-//! コマンドファイルはフラットな YAML で、共通キー (`title` `keyword` `hotkey` `pin` `tags` `when`) と
-//! `type` ごとのキーを持つ。全フィールドを Option にした鏡の構造体で読み込む。
-//! serde が最初に見つけた 1 件で止まらず、ルール違反をすべて行番号付きで報告するため。
+//! A command file is flat YAML with common keys (`title` `keyword` `hotkey` `pin` `tags` `when`) and
+//! per-`type` keys. It is read into a mirror struct whose fields are all `Option`, so every
+//! rule violation is reported with its line number instead of stopping at serde's first error.
 
 use crate::diagnostic::Diagnostic;
 use serde::Deserialize;
@@ -14,15 +14,15 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Command {
     pub title: String,
-    /// 完全一致で入力すると、このコマンドが最優先で選ばれる短い語。書かれた順。
+    /// Short words that rank this command first when typed exactly. In written order.
     pub keywords: Vec<String>,
-    /// このコマンドを直接実行するグローバルショートカット。書式はデスクトップアプリが検証する。
+    /// Global shortcut that runs this command directly. The desktop app validates the format.
     pub hotkey: Option<String>,
-    /// 検索欄が空のとき、ピン留めしたコマンドを先頭に並べる。
+    /// Pinned commands come first when the search field is empty.
     pub pin: bool,
-    /// 設定 UI で絞り込み・まとめるための分類。書かれた順。検索の対象ではない。
+    /// Labels for filtering and grouping in the settings UI. In written order. Not searched.
     pub tags: Vec<String>,
-    /// このコマンドを出す OS。空ならすべての OS。
+    /// The OSes this command appears on. Empty means all.
     pub os: BTreeSet<Os>,
     pub action: Action,
 }
@@ -69,7 +69,7 @@ impl Os {
         Os::ALL.into_iter().find(|os| os.name() == name)
     }
 
-    /// このバイナリのビルド対象の OS。
+    /// The OS this binary was built for.
     pub fn current() -> Os {
         if cfg!(target_os = "macos") {
             Os::Macos
@@ -100,7 +100,7 @@ impl Command {
 
 const TYPE_NAMES: [&str; 4] = ["url", "app", "script", "terminal"];
 
-/// 特定の `type` だけが使うキーと、それを受け付ける type。
+/// Keys used only by certain `type`s, and the types that accept them.
 pub(crate) const TYPE_KEYS: [(&str, &[&str]); 6] = [
     ("url", &["url"]),
     ("app", &["app"]),
@@ -135,12 +135,12 @@ struct RawWhen {
     os: Option<Spanned<OneOrMany>>,
 }
 
-/// `os: macos` と `os: [macos, windows]` の両方を受け付ける。
+/// Accepts both `os: macos` and `os: [macos, windows]`.
 ///
-/// 1 つか複数かは値の形を見て決める。値の形で決める読み方では、YAML 1.1 の流儀だと `on` や `y` が
-/// 真偽値になってしまうので、[`parse_command`] は YAML 1.2 の真偽値 (`true` / `false`) だけを
-/// 真偽値として扱う設定で読む。それでも `1.0` `+1` `true` は数や真偽値として届き、書かれた文字が
-/// 失われる (`1.0` は `1` になる)。その場合は `typed` を立て、呼び出し側がファイルの文字を取り直す。
+/// One or many is decided by the shape of the value. Read that way, YAML 1.1 would turn `on` and `y`
+/// into booleans, so [`parse_command`] reads with a setting that treats only YAML 1.2 booleans
+/// (`true` / `false`) as booleans. Even so, `1.0` `+1` `true` arrive as numbers or booleans and lose
+/// their written text (`1.0` becomes `1`). Then `typed` is set and the caller re-reads the text from the file.
 struct OneOrMany {
     names: Vec<String>,
     typed: bool,
@@ -155,7 +155,7 @@ impl OneOrMany {
     }
 }
 
-/// 値の形を見て読んだために失われた文字を、ファイルのテキストから取り直す。
+/// Recovers from the file text what was lost by reading the value by its shape.
 fn as_written(value: Spanned<OneOrMany>, source: &str) -> Spanned<OneOrMany> {
     if !value.value.typed {
         return value;
@@ -225,10 +225,10 @@ impl<'de> Deserialize<'de> for OneOrMany {
     }
 }
 
-/// 真偽値。手書きする人のために `yes` / `no` / `on` / `off` も受け付ける。
+/// A boolean. Also accepts `yes` / `no` / `on` / `off` for people writing by hand.
 ///
-/// 読み込みを YAML 1.2 の真偽値だけにしているので、それ以外の綴りは文字列として届く。
-/// 引用符で囲んだ `"true"` も文字列として届く。
+/// Parsing recognizes only YAML 1.2 booleans, so other spellings arrive as strings.
+/// A quoted `"true"` also arrives as a string.
 struct Flag(bool);
 
 impl<'de> Deserialize<'de> for Flag {
@@ -268,7 +268,7 @@ fn problem_at<T>(spanned: &Spanned<T>, message: impl Into<String>) -> Diagnostic
     Diagnostic::at(line, column, message)
 }
 
-/// 文字列の値を取り出す。空白だけの場合は問題として報告する。
+/// Extracts a string value. Whitespace only is reported as a problem.
 fn non_blank(key: &str, value: Option<Spanned<String>>, problems: &mut Vec<Diagnostic>) -> Option<String> {
     let value = value?;
     if value.value.trim().is_empty() {
@@ -278,7 +278,7 @@ fn non_blank(key: &str, value: Option<Spanned<String>>, problems: &mut Vec<Diagn
     Some(value.value)
 }
 
-/// 文字列のリストを取り出す。空白だけの値と重複は問題として報告する。
+/// Extracts a list of strings. Whitespace-only values and duplicates are reported as problems.
 fn non_blank_list(key: &str, value: Option<Spanned<OneOrMany>>, problems: &mut Vec<Diagnostic>) -> Vec<String> {
     let Some(value) = value else {
         return Vec::new();
@@ -305,7 +305,7 @@ pub(crate) fn has_url_scheme(url: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
 }
 
-/// コマンドファイルを 1 つ読む。最初の 1 件だけでなく、見つかったルール違反をすべて返す。
+/// Parses one command file. Returns every rule violation found, not just the first.
 pub fn parse_command(source: &str) -> Result<Command, Vec<Diagnostic>> {
     let mut options = serde_saphyr::Options::default();
     options.strict_booleans = true;
@@ -499,7 +499,7 @@ env:
   GITHUB_TOKEN: op://Private/GitHub/token
   STAGE: prod
 pin: true
-tags: [ytyng, 公開]
+tags: [blog, 公開]
 when:
   os: [windows, macos]
 ";
@@ -515,7 +515,7 @@ when:
                 keywords: vec!["deploy".into(), "blog".into()],
                 hotkey: Some("ctrl+alt+cmd+d".into()),
                 pin: true,
-                tags: vec!["ytyng".into(), "公開".into()],
+                tags: vec!["blog".into(), "公開".into()],
                 os: [Os::Macos, Os::Windows].into(),
                 action: Action::Script {
                     run: "fab deploy".into(),
@@ -607,7 +607,7 @@ when:
 
     #[test]
     fn words_that_yaml_1_1_treats_as_booleans_stay_text() {
-        // Arrange: 手書きする人が文字列のつもりで書く語。
+        // Arrange: words people write by hand meaning a string.
         let source = "title: no\nkeyword: on\ntype: script\nrun: yes\n";
 
         // Act
@@ -628,7 +628,7 @@ when:
 
     #[test]
     fn keyword_aliases_and_tags_keep_their_order_and_stay_text() {
-        // Arrange: 値の形で読むキーでも、YAML 1.1 で真偽値や数になる語は文字列のまま。
+        // Arrange: even for keys read by shape, words that YAML 1.1 makes booleans or numbers stay strings.
         let source = "title: A\nkeyword: [today, on, y, 1, 'no']\ntype: url\nurl: https://example.com\ntags: off\n";
 
         // Act
@@ -777,7 +777,7 @@ when:
 
     #[test]
     fn url_without_scheme_is_rejected() {
-        // Arrange: スキームが無いと、OS はファイルパスとして扱う。
+        // Arrange: without a scheme, the OS treats it as a file path.
         let source = "title: A\ntype: url\nurl: example.com/page\n";
 
         // Act
@@ -858,8 +858,8 @@ when:
 
     #[test]
     fn yes_and_no_are_booleans_only_where_a_boolean_is_expected() {
-        // Arrange: 読み込み側は受け取る型で解釈を決めるので、`yes` は `pin` では真偽値、
-        // `title` では文字列になる。
+        // Arrange: the reader interprets by the target type, so `yes` is a boolean for `pin`
+        // and a string for `title`.
         let source = "title: yes\ntype: url\nurl: https://example.com\npin: yes\n";
 
         // Act

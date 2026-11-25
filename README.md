@@ -1,77 +1,77 @@
 # Flintkey
 
-キーボードランチャー。設定をファイルで持ち、Git で複数マシンに共有できる。同じ内容を UI からも編集できるようにする予定。
+A keyboard launcher. Its settings live in files, so they can be shared across machines with Git. The same settings are planned to be editable from a UI as well.
 
-対応 OS は macOS (主) と Windows。設計は [docs/design.md](docs/design.md) にある。
+Supported OSes are macOS (primary) and Windows. The design is in [docs/design.md](docs/design.md).
 
-メニューバー (Windows ではタスクトレイ) に常駐し、ホットキー (既定は `alt+space`) で入力窓を出す。
-設定 UI とプラグインはまだ無く、設定は YAML ファイルを直接書く。
+It stays in the menu bar (the system tray on Windows) and opens an input window with a hotkey (`alt+space` by default).
+There is no settings UI or plugin support yet; settings are written directly as YAML files.
 
-## 設定の例
+## Example settings
 
 `~/.config/flintkey/commands/deploy-blog.yaml`:
 
 ```yaml
 title: Deploy blog
-keyword: [deploy, blog]                     # 別名を持てる
-hotkey: ctrl+alt+cmd+d                      # 窓を出さずに直接実行する
+keyword: [deploy, blog]                     # can have aliases
+hotkey: ctrl+alt+cmd+d                      # runs directly without opening the window
 type: script
 run: fab deploy
 cwd: ~/workspace/blog
 env:
-  GITHUB_TOKEN: op://Private/GitHub/token   # 実行時に 1Password CLI で解決する
-tags: [ytyng]                               # 設定 UI での分類用
+  GITHUB_TOKEN: op://Private/GitHub/token   # resolved with the 1Password CLI at run time
+tags: [personal]                            # for grouping in the settings UI
 ```
 
-1 コマンド 1 ファイル。`type` は `url` / `app` / `script` / `terminal`。
+One command per file. `type` is `url` / `app` / `script` / `terminal`.
 
-## 開発
+## Development
 
 ```shell
-cargo test --workspace                                    # Rust のユニットテスト
+cargo test --workspace                                    # Rust unit tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 
 cd apps/desktop
 pnpm install
-pnpm test                                                 # ページのユニットテスト
-pnpm check                                                # 型チェック
-pnpm tauri dev                                            # アプリを起動する
+pnpm test                                                 # unit tests for the page
+pnpm check                                                # type check
+pnpm tauri dev                                            # start the app
 ```
 
-`FLINTKEY_CONFIG_DIR` と `FLINTKEY_STATE_DIR` で、本物の設定に触れずに別のフォルダを使える。
+`FLINTKEY_CONFIG_DIR` and `FLINTKEY_STATE_DIR` point the app at other folders, so it does not touch your real settings.
 
-### 手元にインストールする (macOS)
+### Installing locally (macOS)
 
 ```shell
 pnpm -C apps/desktop local-deploy
 ```
 
-`.app` をビルドし、Developer ID での署名・Apple の公証・staple を済ませて `/Applications` に置く
-(Developer ID の証明書と、Keychain の `cyberneura-notary` プロファイルが要る)。
-起動中の Flintkey は止めないので、メニューバーから終了して開き直す。
+Builds the `.app`, signs it with a Developer ID, has Apple notarize it, staples the ticket and puts it in `/Applications`
+(this needs a Developer ID certificate and a `cyberneura-notary` profile in the Keychain).
+A running Flintkey is not stopped, so quit it from the menu bar and open it again.
 
-[j-menu](https://github.com/cyberneura/j-menu) を使っているなら、`j` のメニューに Tauri dev と Local deploy がある。
+If you use [j-menu](https://github.com/cyberneura/j-menu), the `j` menu has Tauri dev and Local deploy.
 
-### コマンドラインで試す
+### Trying it from the command line
 
 ```shell
-cargo run -p flintkey-core --example flintkey -- list [query]   # 順位付けした一覧と、壊れているファイル
-cargo run -p flintkey-core --example flintkey -- plan <id>      # 実行すると何が起きるか
-cargo run -p flintkey-core --example flintkey -- run <id>       # 実行する
-cargo run -p flintkey-core --example flintkey -- import-alfred  # Alfred のワークフローから作るコマンドの一覧
-cargo run -p flintkey-core --example flintkey -- import-alfred --write   # 実際に書く
+cargo run -p flintkey-core --example flintkey -- list [query]   # ranked list, plus files that are broken
+cargo run -p flintkey-core --example flintkey -- plan <id>      # what running it would do
+cargo run -p flintkey-core --example flintkey -- run <id>       # run it
+cargo run -p flintkey-core --example flintkey -- import-alfred  # list the commands that would be made from Alfred workflows
+cargo run -p flintkey-core --example flintkey -- import-alfred --write   # actually write them
 ```
 
-Alfred から移したホットキーは、Alfred 側も持ったままになる。macOS では、Alfred が使っているホットキーも
-エラーにならずに登録できてしまう (重なっていることを Flintkey は検出できない)。`--write` の前後で、
-Alfred のワークフローを無効にする。
+Hotkeys moved over from Alfred stay assigned in Alfred too. On macOS, a hotkey that Alfred already uses can still be
+registered without an error (Flintkey cannot detect the overlap). Disable the Alfred workflows around the time you run
+`--write`.
 
-## フォルダ
+## Folders
 
-| フォルダ | 内容 |
+| Folder | Contents |
 |---|---|
-| `crates/flintkey-core` | 描画エンジンに依存しないコア |
-| `apps/desktop` | デスクトップアプリ (Tauri 2 + Svelte 5 + Tailwind 4) |
-| `docs` | 設計 |
-| `spikes` | 設計判断の根拠にした実験 (YAML の編集、UI エンジンの比較)。製品には入らない |
+| `crates/flintkey-core` | Core that does not depend on a rendering engine |
+| `apps/desktop` | Desktop app (Tauri 2 + Svelte 5 + Tailwind 4) |
+| `docs` | Design |
+| `spikes` | Experiments behind design decisions (YAML editing, UI engine comparison). Not part of the product |

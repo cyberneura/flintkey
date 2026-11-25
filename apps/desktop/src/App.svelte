@@ -29,11 +29,12 @@
   let input: HTMLInputElement | undefined = $state();
   let list: HTMLUListElement | undefined = $state();
 
-  // 今の表示の番号 (隠れている間は 0)。実行要求に付けて送り、アプリ側が今の表示と照合する。
-  // 窓を閉じて開き直したあとに、前の表示での操作が実行されるのを防ぐ。
+  // Number of the current showing (0 while hidden). Sent with run requests so the app can match it against
+  // the current showing. Prevents actions from a previous showing from running after the window reopens.
   let showing = 0;
 
-  // 一覧と表示の番号は同じ応答から取る。古い応答は丸ごと捨てるので、番号だけが古くなることは無い。
+  // The list and the showing number come from the same response. Stale responses are dropped whole,
+  // so the number never goes stale on its own.
   const results = latestOnly<{ rows: Row[]; showing?: number }>((found) => {
     rows = found.rows;
     selected = 0;
@@ -43,7 +44,7 @@
   });
 
   async function openSession() {
-    // 窓が出たまま知らせで呼ばれることがある。打ってある文字での一覧を受け取る。
+    // This can be called for a notice while the window is open. Fetch the list for the text already typed.
     const view = invoke<View>('open_session', { query });
     results.start(view.then((opened) => ({ rows: opened.rows, showing: opened.showing })));
     const opened = await view;
@@ -67,7 +68,7 @@
     }
   }
 
-  // 打った文字の検索結果が届く前に Enter を押しても、古い一覧の行を実行しない。
+  // If Enter is pressed before results for the typed text arrive, do not run a row from the old list.
   async function runSelected() {
     const pressedIn = showing;
     await results.settled();
@@ -77,8 +78,8 @@
   }
 
   function onKeydown(event: KeyboardEvent) {
-    // エラー文などをクリックすると入力欄からフォーカスが外れる。次のキーで戻す。
-    // コピーなどの修飾キー付きの操作では戻さない (戻すと選択範囲が消える)。
+    // Clicking an error message or similar takes focus from the input. Return it on the next key.
+    // Not for modifier shortcuts such as copy (returning focus would clear the selection).
     if (document.activeElement !== input && !event.metaKey && !event.ctrlKey) {
       input?.focus();
     }
@@ -112,7 +113,7 @@
         showing = event.payload;
         openSession();
       }),
-      // 次に出したとき、前回の入力が一瞬見えないように、隠した時点で消しておく。
+      // Clear on hide so the previous input does not flash when the window next appears.
       listen('launcher-hidden', () => {
         showing = 0;
         query = '';

@@ -1,24 +1,25 @@
 # Flintkey
 
-キーボードランチャー。仕様は `docs/design.md`、概要は `README.md`。
+A keyboard launcher. The specification is `docs/design.md`; the overview is `README.md`.
 
-## 構成
+## Layout
 
-- `crates/flintkey-core`: 描画エンジンに依存しないコア。設定の読み書き・検証・アクション・秘密情報・検索・
-  Alfred からの変換 (`alfred.rs`。plist は CLI が `plutil` で JSON にして渡す)。
-  - `examples/flintkey.rs`: CLI (`list` / `plan` / `run` / `import-alfred`)。
-- `spikes/`: 設計判断の根拠にした実験。ワークスペースには含めない (`Cargo.toml` の `exclude`)。
-  それぞれ独立した Cargo プロジェクトで、製品コードから参照しない。
-- `apps/desktop`: デスクトップアプリ (Tauri 2 + Svelte 5 + Tailwind 4)。コアを呼ぶ薄い層。
-  - `src-tauri/src/main.rs`: 常駐、トレイ、ホットキー、窓を出す / 隠す。
-  - `src-tauri/src/placement.rs`: 窓を置く位置の計算 (純粋な関数)。
-  - `src-tauri/src/session.rs`: 窓に依存しない状態 (読み込み、検索、実行の計画)。
-  - `src-tauri/src/showing.rs`: 表示ごとの番号と、実行要求の受け付け (純粋な状態)。
-  - `src-tauri/src/hotkeys.rs`: 設定のホットキーから、登録するショートカットの組を決める (純粋な関数)。
-  - `src-tauri/src/panel.rs`: macOS で窓を NSPanel に差し替える。
-  - `src/`: ランチャー窓のページ。キーの解釈は `src/lib/keys.ts`。
+- `crates/flintkey-core`: Core that does not depend on a rendering engine. Reading, writing and validating settings,
+  actions, secrets, search, and conversion from Alfred (`alfred.rs`; the CLI turns the plist into JSON with `plutil`
+  and passes that in).
+  - `examples/flintkey.rs`: CLI (`list` / `plan` / `run` / `import-alfred`).
+- `spikes/`: Experiments behind design decisions. Not part of the workspace (`exclude` in `Cargo.toml`).
+  Each is an independent Cargo project, and product code does not reference them.
+- `apps/desktop`: Desktop app (Tauri 2 + Svelte 5 + Tailwind 4). A thin layer that calls the core.
+  - `src-tauri/src/main.rs`: Background process, tray, hotkeys, showing / hiding the window.
+  - `src-tauri/src/placement.rs`: Computes where to put the window (pure functions).
+  - `src-tauri/src/session.rs`: State that does not depend on the window (loading, search, planning a run).
+  - `src-tauri/src/showing.rs`: A number per showing of the window, and accepting run requests (pure state).
+  - `src-tauri/src/hotkeys.rs`: Decides the set of shortcuts to register from the hotkeys in the settings (pure functions).
+  - `src-tauri/src/panel.rs`: Replaces the window with an NSPanel on macOS.
+  - `src/`: The launcher window's page. Key handling is in `src/lib/keys.ts`.
 
-## コマンド
+## Commands
 
 ```shell
 cargo test --workspace
@@ -28,40 +29,44 @@ pnpm -C apps/desktop test
 pnpm -C apps/desktop check
 ```
 
-`cargo` のコマンドはページをビルドしていなくても通る (開発用ビルドはページを埋め込まない)。
+The `cargo` commands pass even if the page has not been built (development builds do not embed the page).
 
-`.j-menu.yaml` に Tauri dev / Local deploy / CLI のインストール / Alfred からの移行 (書き込まない一覧) / clippy を登録してある。
-Local deploy (`apps/desktop/scripts/local-deploy.sh`) は `.app` をビルドし、Developer ID 署名・Apple 公証・staple の
-検証後に `/Applications` に置く。公証には Keychain の `cyberneura-notary` (`NOTARY_PROFILE` で変更可) を使い、
-失敗時は既存のアプリを置き換えない。置き場所は `DEST_DIR` で変えられる。署名は Cyberneura の Developer ID に
-固定で、`notarize-app.sh` が公証の前に検証する。
+`.j-menu.yaml` has entries for Tauri dev / Local deploy / installing the CLI / migrating from Alfred (a list that writes nothing) / clippy.
+Local deploy (`apps/desktop/scripts/local-deploy.sh`) builds the `.app` and, after verifying the Developer ID signature,
+Apple notarization and stapling, puts it in `/Applications`. Notarization uses `cyberneura-notary` in the Keychain
+(override with `NOTARY_PROFILE`); on failure the existing app is not replaced. `DEST_DIR` changes the destination.
+Signing is fixed to Cyberneura's Developer ID, and `notarize-app.sh` checks it before notarizing.
 
-## 決まり
+## Rules
 
-- コアはウインドウ無しでテストできる状態を保つ。OS ごとの挙動は `launch::plan` のように
-  「マシンの情報を引数で受け取る純粋な関数」にして、どの OS 向けの挙動も手元でテストする。
-- 設定ファイルへの書き込みは `Store` を通す。意味が変わったキーだけを書き換えるという性質
-  (`docs/design.md` の「保存」) を壊さない。
-- 秘密情報を解決した値をログ・ディスク・`Debug` 出力に出さない。
-- コードコメントは日本語。ユーザーに見せるメッセージ (エラー文など) は英語。
-- 依存 crate は公開から 7 日以上経ったバージョンを使う。`Cargo.lock` に入る間接依存も対象
-  (crate を足すと、その時点の最新版で解決される)。npm 側は `apps/desktop/pnpm-workspace.yaml` の
-  `minimumReleaseAge` が守る。
-- 配色はダークテーマのみ。Tailwind の `dark:` は使わず、暗い色を直接書く。
-- 白い背景を一瞬も見せない。窓を足すときは、隠したまま作り、背景を透明か暗い色にする
-  (ページが描かれる前に出ても白くならないようにする)。
-- 窓の座標は OS ごとに意味が違う。位置の計算は `placement::place` に閉じ込め、窓の API が返した値を
-  そのまま比べない。
+- Keep the core testable without a window. Make OS-specific behavior a "pure function that takes the machine's
+  information as arguments", like `launch::plan`, and test the behavior for every OS locally.
+- Write to settings files through `Store`. Do not break the property that only keys whose meaning changed are
+  rewritten ("Saving" in `docs/design.md`).
+- Never put resolved secret values into logs, on disk, or in `Debug` output.
+- Everything in the repository is written in English: code comments, documentation, messages shown to users
+  (error text etc.), commit messages and PR descriptions. Japanese is fine as test input data.
+- Use dependency crate versions that were published at least 7 days ago. This includes indirect dependencies that
+  end up in `Cargo.lock` (adding a crate resolves to the latest versions at that moment). On the npm side,
+  `minimumReleaseAge` in `apps/desktop/pnpm-workspace.yaml` enforces this.
+- Dark theme only. Do not use Tailwind's `dark:`; write the dark colors directly.
+- Never show a white background, even for a moment. When adding a window, create it hidden and give it a
+  transparent or dark background (so it does not turn white if it appears before the page is drawn).
+- Do not put personal names, company names or other data from a real setup into tests and documents; use neutral
+  examples (the project is open source).
+- Window coordinates mean different things on each OS. Keep position calculations inside `placement::place`, and
+  do not compare values returned by the window API directly.
 
-## 実機確認
+## Checking on a real machine
 
-- ターミナル起動 (`type: terminal`) は AppleScript を使うので、変更したら Terminal.app の 3 つの状態
-  (未起動 / 起動中でウインドウなし / ウインドウあり) で実際に動かして確かめる。ユニットテストは
-  組み立てたコマンドラインしか見ていない。
-- GUI アプリは Claude Code のサンドボックス内では描画できない。画面が要る確認はサンドボックスの外で行う。
-- アプリを手元で試すときは、`FLINTKEY_CONFIG_DIR` / `FLINTKEY_STATE_DIR` で別のフォルダを使い、
-  `settings.yaml` の `hotkey` を普段使わない組み合わせにする (常用のホットキーを奪わないため)。
-  起動中のアプリをもう一度起動すると窓が出るので、ホットキーを押さずに窓を出せる。
-  多重起動の判定は設定フォルダと無関係なので、常用の Flintkey が起動中なら先に終了する
-  (終了しないと、常用の方の窓が出るだけでテスト用の設定は使われない)。
-- Windows 向けの挙動は実機で未確認。Windows 機で動かしたら `docs/design.md` の「実装状況」を更新する。
+- Launching a terminal (`type: terminal`) uses AppleScript, so after changing it, run it for real in the three states
+  of Terminal.app (not running / running with no windows / with a window). The unit tests only look at the assembled
+  command line.
+- GUI apps cannot draw inside the Claude Code sandbox. Do checks that need the screen outside the sandbox.
+- When trying the app locally, use separate folders via `FLINTKEY_CONFIG_DIR` / `FLINTKEY_STATE_DIR`, and set
+  `hotkey` in `settings.yaml` to a combination you do not normally use (so the everyday hotkey is not taken).
+  Launching the app again while it is running shows the window, so you can open the window without pressing the hotkey.
+  Single-instance detection does not depend on the settings folder, so if your everyday Flintkey is running, quit it
+  first (otherwise only the everyday instance's window appears and the test settings are not used).
+- Windows behavior has not been checked on a real machine. After running it on a Windows machine, update "Status" in
+  `docs/design.md`.

@@ -1,7 +1,7 @@
-//! スパイク: 手書きでコメントの付いたコマンドファイルを、人が書いた内容を壊さずに
-//! yaml-edit で書き換えられるか。各ケースは `BASE` を編集して結果を出力し、テキスト
-//! (コメントと、触れていない行) と意味 (アプリが使う読み込みライブラリの serde-saphyr で
-//! 読み直す) の両方を確かめる。
+//! Spike: can yaml-edit rewrite a hand-written, commented command file without breaking
+//! what the person wrote? Each case edits `BASE`, prints the result, and checks both the text
+//! (comments and untouched lines) and the meaning (re-read with serde-saphyr, the parser the
+//! app uses).
 
 use serde_json::{json, Value};
 use std::str::FromStr;
@@ -14,7 +14,7 @@ keyword: deploy
 
 type: script
 run: fab deploy
-cwd: ~/workspace/ytyng-blog
+cwd: ~/workspace/blog
 env:
   # token for gh
   GITHUB_TOKEN: op://Private/GitHub/token
@@ -35,7 +35,7 @@ fn parse(text: &str) -> Result<Value, String> {
     serde_saphyr::from_str::<Value>(text).map_err(|e| e.to_string())
 }
 
-/// `before` の行のうち `after` に無いもの。そのケースが触れるはずの行は除く。
+/// Lines of `before` that are missing from `after`, excluding the lines the case is expected to touch.
 fn lost_lines(before: &str, after: &str, expected_touched: &[&str]) -> Vec<String> {
     before
         .lines()
@@ -243,7 +243,7 @@ fn main() {
         |v, _| expect_eq(v, "/tags", json!(["deploy"])),
     ));
 
-    // 不注意な書き出しをすると、別の型になったりファイルを壊したりする文字列。
+    // Strings that turn into another type or break the file when written out carelessly.
     let tricky: &[(&str, &str)] = &[
         ("yes-no", "no"),
         ("on-off", "on"),

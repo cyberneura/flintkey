@@ -1,5 +1,5 @@
-//! 2 つのエンジンのスパイクが共有するコード。同じ負荷を測るためのもの:
-//! 同じ 1000 件の候補、同じあいまい検索、同じ模擬入力。
+//! Code shared by the two engine spikes, so that both measure the same workload:
+//! the same 1000 candidates, the same fuzzy search, the same simulated input.
 
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32String};
@@ -10,13 +10,13 @@ use std::time::{Duration, Instant};
 pub const ITEM_COUNT: usize = 1000;
 pub const SHOW_CYCLES: usize = 20;
 pub const REOPEN_CYCLES: usize = 10;
-/// 表示の計測の前に、窓を隠しておく時間。
+/// How long the window stays hidden before a show is measured.
 pub const HIDDEN_PAUSE: Duration = Duration::from_millis(500);
-/// 1 手順に許す時間。超えたら計測全体を止めずに、欠損として記録する。
+/// Time allowed for one step. When exceeded, the step is recorded as missing instead of stopping the whole run.
 pub const STEP_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// 検索欄に 1 つずつ入力するキー。クエリは 1 文字から 11 文字に伸びるので、
-/// 最初のうちは一覧の大半に一致し、最後はほとんど一致しない。
+/// Keys typed into the search field one at a time. The query grows from 1 to 11 characters,
+/// so at first it matches most of the list and at the end it matches almost nothing.
 pub const TYPED_KEYS: &[&str] = &["d", "e", "p", "l", "o", "y", "b", "l", "o", "g", "s"];
 
 #[derive(Clone, Debug, Serialize)]
@@ -25,8 +25,8 @@ pub struct Item {
     pub subtitle: String,
 }
 
-/// 実際のランチャーの項目に似せた、毎回同じ内容の候補。アプリ・URL・スクリプト・
-/// プロジェクトのフォルダ。一部は日本語。
+/// Deterministic candidates that resemble real launcher items: apps, URLs, scripts and
+/// project folders. Some are in Japanese.
 pub fn items(count: usize) -> Vec<Item> {
     const VERBS: &[&str] = &[
         "Open",
@@ -90,7 +90,7 @@ impl Searcher {
         }
     }
 
-    /// 一致した項目の添字。スコアの高い順。空のクエリは全件を元の順で返す。
+    /// Indices of the matching items, highest score first. An empty query returns everything in the original order.
     pub fn search(&mut self, query: &str) -> Vec<u32> {
         if query.is_empty() {
             return (0..self.haystacks.len() as u32).collect();
@@ -110,25 +110,25 @@ impl Searcher {
 #[derive(Default, Debug, Serialize)]
 pub struct Report {
     pub engine: String,
-    /// 計測中は "running"、メモリの計測待ちは "idle"、終了時は "done"。
+    /// "running" while measuring, "idle" while waiting for the memory measurement, "done" when finished.
     pub phase: String,
     pub pid: u32,
     pub item_count: usize,
-    /// プロセスの開始から、ランチャー窓の最初のフレームまで。
+    /// From process start to the first frame of the launcher window.
     pub cold_start_ms: Option<f64>,
-    /// キーごと: キー入力から、新しい結果一覧を描いたフレームまで。
+    /// Per key: from the key press to the frame that draws the new result list.
     pub type_total_ms: Vec<Option<f64>>,
-    /// キーごと: あいまい検索だけにかかった時間。
+    /// Per key: time spent in the fuzzy search alone.
     pub type_filter_us: Vec<f64>,
-    /// 入力後に検索欄に入っていた文字列。入力したキーを連結したものと一致しなければならない。
+    /// The text in the search field after typing. Must equal the typed keys concatenated.
     pub typed_query: String,
-    /// 1 回ごと: 表示要求から、窓が再び見えた後の最初のフレームまで。
+    /// Per cycle: from the show request to the first frame after the window is visible again.
     pub show_ms: Vec<Option<f64>>,
-    /// 1 回ごと: 表示要求から、OS が窓を可視と報告するまで (GPUI のみ)。
+    /// Per cycle: from the show request until the OS reports the window as visible (GPUI only).
     pub show_visible_ms: Vec<Option<f64>>,
-    /// 1 回ごと: 窓を閉じて新しく開き、その最初のフレームまで (GPUI のみ)。
+    /// Per cycle: from closing the window and opening a new one to its first frame (GPUI only).
     pub reopen_ms: Vec<Option<f64>>,
-    /// 隠した状態でアイドルにした後の、このプロセスだけの physical footprint。
+    /// Physical footprint of this process alone, after it has gone idle while hidden.
     pub self_footprint_kb: Option<u64>,
     pub notes: Vec<String>,
 }
@@ -144,7 +144,7 @@ impl Report {
         }
     }
 
-    /// 一時ファイル経由で書く。ランナースクリプトが書きかけのファイルを読まないようにするため。
+    /// Written through a temporary file so the runner script never reads a half-written file.
     pub fn write(&self, path: &Path) {
         let tmp = path.with_extension("json.tmp");
         let body = serde_json::to_string_pretty(self).expect("report serializes");
@@ -166,7 +166,7 @@ pub fn expected_query() -> String {
     TYPED_KEYS.concat()
 }
 
-/// コマンドラインの `--bench <path>`。あれば返す。
+/// `--bench <path>` from the command line, if present.
 pub fn bench_output_from_args() -> Option<std::path::PathBuf> {
     let args: Vec<String> = std::env::args().collect();
     args.iter()
@@ -177,7 +177,7 @@ pub fn bench_output_from_args() -> Option<std::path::PathBuf> {
 
 #[cfg(target_os = "macos")]
 pub fn self_footprint_kb() -> Option<u64> {
-    // phys_footprint はアクティビティモニタの「メモリ」に出る値。RSS は共有ページを多く数えすぎる。
+    // phys_footprint is the value Activity Monitor shows as "Memory". RSS overcounts shared pages.
     unsafe {
         let mut info: libc::rusage_info_v2 = std::mem::zeroed();
         let rc = libc::proc_pid_rusage(
@@ -194,7 +194,7 @@ pub fn self_footprint_kb() -> Option<u64> {
     None
 }
 
-/// あいまい検索だけの中央値と最悪値。画面なしの確認用。
+/// Median and worst time of the fuzzy search alone. For checks without a screen.
 pub fn time_search(searcher: &mut Searcher, query: &str, rounds: usize) -> (Duration, Duration, usize) {
     let mut samples = Vec::with_capacity(rounds);
     let mut hits = 0;

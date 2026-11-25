@@ -1,224 +1,224 @@
-# Flintkey 設計
+# Flintkey design
 
-Alfred / Raycast と同じ用途のキーボードランチャー。差別化点は **設定のしやすさ** で、
-設定をファイルとして持ち、Git で複数マシンに共有でき、同じ内容を UI からも編集できる。
+A keyboard launcher for the same purpose as Alfred / Raycast. What sets it apart is **ease of configuration**:
+the configuration is kept as files, can be shared across machines with Git, and the same content can also be edited from a UI.
 
-## 実装状況
+## Status
 
-| 部分 | 状況 |
+| Part | Status |
 |---|---|
-| コア (`crates/flintkey-core`): 設定の読み書き、検証、アクション、秘密情報、検索 | 実装済み |
-| デスクトップアプリ (`apps/desktop`): 常駐、トレイ、ホットキー、ランチャー窓 | 実装済み |
-| コマンドごとのホットキー | 実装済み |
-| Alfred からの移行 (CLI の `import-alfred`) | 実装済み |
-| ウィジェット (ランチャー窓の上側) | 未実装 |
-| 設定 UI | 未実装 |
-| プラグイン機構、development-starter プラグイン | 未実装 |
+| Core (`crates/flintkey-core`): reading and writing configuration, validation, actions, secrets, search | Implemented |
+| Desktop app (`apps/desktop`): background process, tray, hotkey, launcher window | Implemented |
+| Per-command hotkeys | Implemented |
+| Migration from Alfred (`import-alfred` in the CLI) | Implemented |
+| Widgets (above the launcher window) | Not implemented |
+| Settings UI | Not implemented |
+| Plugin system, development-starter plugin | Not implemented |
 
-実機で確認できていないもの:
+Not yet confirmed on real hardware:
 
-- Windows 向けの挙動すべて (PowerShell でのスクリプト実行、Windows Terminal、アプリ起動)。
-  コマンドラインの組み立てはテストで固定しているが、Windows 実機では一度も動かしていない。
-- 本物の 1Password の秘密情報を使った解決。`op inject` の入出力の形は確認済みで、
-  解決そのものは代役の `op` でテストしている。
-- 日本語 IME は macOS で確認した (変換中の表示、確定の Enter で実行されないこと)。Windows は未確認。
-- デスクトップアプリの次の点 (macOS):
-  - 外付けディスプレイに出した窓でのキー入力 (置く座標は 5 画面の構成で確認済み)。
-  - フルスクリーンのアプリの上に出ること。
-  - 署名済み (Hardened Runtime) の `.app` での動作。とくに `type: terminal` が使う Apple Events。
-  - トレイのメニュー、Esc、窓の外のクリック。
-  - Alfred と同じホットキーを両方が持っているときに、どちらが反応するか。
+- All Windows behavior (running scripts with PowerShell, Windows Terminal, launching apps).
+  The assembled command lines are fixed by tests, but they have never been run on a real Windows machine.
+- Resolving real 1Password secrets. The input and output format of `op inject` has been confirmed,
+  and resolution itself is tested with a stand-in `op`.
+- The Japanese IME has been checked on macOS (the display during composition, and that the Enter that commits does not run a command). Windows is not checked.
+- The following points of the desktop app (macOS):
+  - Key input in a window shown on an external display (the placement coordinates have been checked with a 5-display setup).
+  - Appearing on top of a full-screen app.
+  - Behavior in a signed (Hardened Runtime) `.app`. In particular, the Apple Events used by `type: terminal`.
+  - The tray menu, Esc, and clicks outside the window.
+  - Which app responds when both Alfred and Flintkey have the same hotkey.
 
-## 構成
+## Layout
 
 ```
 flintkey/
-├── crates/flintkey-core/   描画エンジンに依存しないコア。ウインドウ無しで全部テストできる
-├── apps/desktop/           デスクトップアプリ (Tauri 2 + Svelte 5 + Tailwind 4)。コアを呼ぶ薄い層
-│   ├── src/                ランチャー窓のページ
-│   └── src-tauri/          常駐、トレイ、ホットキー、窓の配置
+├── crates/flintkey-core/   Core that does not depend on a rendering engine. Everything can be tested without a window
+├── apps/desktop/           Desktop app (Tauri 2 + Svelte 5 + Tailwind 4). A thin layer that calls the core
+│   ├── src/                The launcher window's page
+│   └── src-tauri/          Background process, tray, hotkey, window placement
 ├── docs/design.md
-└── spikes/                 設計判断の根拠にした実験。製品には入らない
+└── spikes/                 Experiments that design decisions were based on. Not part of the product
 ```
 
-## UI エンジン: Tauri 2
+## UI engine: Tauri 2
 
-GPUI (gpui-kit) と比較して Tauri 2 を選んだ。`spikes/` に両方の最小ランチャーと計測スクリプトがある。
+Tauri 2 was chosen after comparing it with GPUI (gpui-kit). `spikes/` has a minimal launcher and measurement scripts for both.
 
-MacBook (Apple M2、60Hz) での実測 (中央値):
+Measurements on a MacBook (Apple M2, 60Hz) (median):
 
-| 項目 | GPUI (gpui-kit 0.10.0) | Tauri 2.12.6 |
+| Item | GPUI (gpui-kit 0.10.0) | Tauri 2.12.6 |
 |---|---|---|
-| 隠した窓の再表示 → 描画 | 67〜91 ms | 41〜42 ms |
-| 窓を閉じて作り直す → 描画 | 34〜67 ms | 計測せず |
-| キー入力 → 結果の描画 (候補 1000 件) | 16〜33 ms | 15〜16 ms |
-| アイドル時メモリ (全プロセスの RSS 合計) | 84〜98 MB | 166〜168 MB |
+| Re-show a hidden window → drawn | 67–91 ms | 41–42 ms |
+| Close and recreate the window → drawn | 34–67 ms | Not measured |
+| Key input → result drawn (1000 candidates) | 16–33 ms | 15–16 ms |
+| Idle memory (total RSS of all processes) | 84–98 MB | 166–168 MB |
 
-GPUI の時間に幅があるのは、描画の完了を直接観測できないため。下限は「変更を描くフレームの開始」、
-上限は「その次のフレームの開始」(描画と表示が済んでいる) で測った。Tauri はメインスレッドの
-描画処理が済んだ時点で測っている (再表示だけは、その通知が Rust 側に届いた時点)。
-どちらも画素が画面に出た時点ではない。
+The GPUI times are ranges because the completion of drawing cannot be observed directly. The lower bound was measured at "the start of the frame that draws the change",
+and the upper bound at "the start of the next frame" (by then drawing and display are done). Tauri is measured at the point where the main thread's
+drawing work is done (only for re-showing, at the point where that notification reaches the Rust side).
+Neither is the point where the pixels appear on screen.
 
-選定理由:
+Reasons for the choice:
 
-1. 測った範囲では、GPUI の方が速いという結果は出なかった。再表示は Tauri の方が速く、
-   キー入力の応答は Tauri が 60Hz の 1 フレーム以内、GPUI は 1〜2 フレーム。
-2. GPUI にはウインドウ単位の hide / show が無く、Windows ではアプリ単位の hide / activate が空実装。
-   Windows 対応には自前の Win32 コードが要る。
-3. GPUI でコンポーネント群を使うには `gpui-kit` に依存することになるが、これは個人 1 人が
-   Zed のスナップショットを再公開しているもので、毎週マイナーバージョンが上がる。
-4. グローバルホットキー、トレイ、カーソル位置、ディスプレイの取得が Tauri では標準 API にある。
-5. 設定 UI (フォームと YAML の並列編集) は Web の部品で作る方が容易。
+1. Within what was measured, GPUI did not come out faster. Re-showing is faster with Tauri,
+   and the key input response is within one 60Hz frame with Tauri, 1–2 frames with GPUI.
+2. GPUI has no per-window hide / show, and on Windows the per-app hide / activate is an empty implementation.
+   Supporting Windows would need our own Win32 code.
+3. Using a component set with GPUI means depending on `gpui-kit`, which is a re-publication of a Zed snapshot
+   by a single individual, and its minor version goes up every week.
+4. Tauri has standard APIs for global hotkeys, the tray, the cursor position and getting the displays.
+5. The settings UI (form and YAML edited side by side) is easier to build with web components.
 
-Tauri を選んだことによる弱点:
+Weaknesses that come from choosing Tauri:
 
-- メモリが約 70 MB 多い (WebView のヘルパープロセスが常駐する)。
-- Windows で `show()` の白フラッシュやハングの報告がある。Windows 実機での確認が必要。
-- Rust と TypeScript の 2 言語になる。
+- About 70 MB more memory (the WebView helper processes stay resident).
+- There are reports of a white flash and hangs on `show()` on Windows. Needs checking on a real Windows machine.
+- Two languages: Rust and TypeScript.
 
-## 常駐とランチャー窓
+## Background process and launcher window
 
-### 常駐
+### Background process
 
-- macOS はメニューバー、Windows はタスクトレイにアイコンを出して常駐する。macOS では Dock とアプリ切り替えに出ない。
-- トレイのメニュー: Show Flintkey / Open Config Folder / Quit Flintkey。
-  Windows ではアイコンの左クリックで窓を出し、右クリックでメニューを出す。
-- `settings.yaml` の `hotkey` を押すと窓が出る。出ている間に押すと隠れる。
-- コマンドファイルの `hotkey` を押すと、窓を出さずにそのコマンドを実行する。
-  失敗したときは、窓で知らせる (「エラーの表示」と同じ扱い)。
-- 2 つ目を起動すると、常駐している方の窓が出る (多重起動しない)。
-- ホットキーが登録できない (書式が違う、他のアプリが使っている) 場合は、起動時に窓を出して理由を表示する。
-  その間もトレイのメニューから窓を出せる。
+- Stays resident with an icon in the menu bar on macOS and in the task tray on Windows. On macOS it does not appear in the Dock or the app switcher.
+- Tray menu: Show Flintkey / Open Config Folder / Quit Flintkey.
+  On Windows, left-clicking the icon shows the window and right-clicking shows the menu.
+- Pressing the `hotkey` in `settings.yaml` shows the window. Pressing it while the window is shown hides it.
+- Pressing a command file's `hotkey` runs that command without showing the window.
+  If it fails, the window reports it (handled the same way as in "Error display").
+- Starting a second instance shows the window of the resident one (no multiple instances).
+- If the hotkey cannot be registered (wrong format, used by another app), the window is shown at startup with the reason.
+  The window can still be shown from the tray menu in the meantime.
 
-### 窓
+### Window
 
-- 枠なし。タイトルバーを出さない (macOS の信号機ボタンを出さない)。窓自体は透明で、角丸のパネルだけが見える。
-- 出すディスプレイを設定で選べる。
-  - `cursor`: ホットキーを押した時点でマウスカーソルがあるディスプレイ (既定)
-  - `primary`: メインディスプレイ
-- ディスプレイの判定は表示のたびに行う。左右は作業領域の中央。上下は、余白 (作業領域の高さ − 窓の高さ) の
-  22% を上に取る。
-- 窓は閉じずに隠す。Esc、窓の外のクリック、フォーカスを失ったときに隠れる。
-  隠すと、キー入力は元のアプリに戻る。
+- Frameless. No title bar (no macOS traffic-light buttons). The window itself is transparent; only the rounded panel is visible.
+- The display to show it on can be chosen in the settings.
+  - `cursor`: the display that has the mouse cursor when the hotkey is pressed (default)
+  - `primary`: the main display
+- The display is determined each time the window is shown. Horizontally, it is centered in the work area. Vertically, 22% of the
+  free space (work area height − window height) is placed above it.
+- The window is hidden, not closed. It hides on Esc, on a click outside the window, and when it loses focus.
+  When hidden, key input goes back to the previous app.
 
-macOS では、窓を「アプリを前面にせずにキー入力を受け取るパネル」(NSPanel、nonactivating) にしている
-(`apps/desktop/src-tauri/src/panel.rs`)。macOS はホットキーをきっかけにした自己前面化を許さないので、
-普通の窓は表示されてもキー入力を受け取れない。Tauri は NSPanel を作れないため、作られた NSWindow の
-クラスを実行時に差し替える。NSPanel と NSWindow の大きさが違う OS では差し替えず、普通の窓として動かす
-(その場合はアプリを前面化して表示し、隠すときにアプリごと隠す)。
+On macOS, the window is made a "panel that receives key input without bringing the app to the front" (NSPanel, nonactivating)
+(`apps/desktop/src-tauri/src/panel.rs`). macOS does not allow an app to bring itself to the front in response to a hotkey, so
+a normal window cannot receive key input even when shown. Tauri cannot create an NSPanel, so the class of the created NSWindow
+is swapped at runtime. On an OS where NSPanel and NSWindow differ in size, the class is not swapped and the window works as a normal window
+(in that case the app is brought to the front when showing, and the whole app is hidden when hiding).
 
-位置の計算 (`apps/desktop/src-tauri/src/placement.rs`) は OS ごとに座標系が違う:
+The position calculation (`apps/desktop/src-tauri/src/placement.rs`) has different coordinate systems on each OS:
 
-| OS | 画面全体で一貫している座標 | 窓の API が返す値 |
+| OS | Coordinates consistent across the whole screen | Values returned by the window API |
 |---|---|---|
-| macOS | ポイント (論理座標) | モニターの位置と大きさは「ポイント × そのモニターの拡大率」、カーソルは「ポイント × メインモニターの拡大率」 |
-| Windows | 物理座標 | そのまま |
+| macOS | Points (logical coordinates) | Monitor position and size are "points × that monitor's scale factor"; the cursor is "points × the main monitor's scale factor" |
+| Windows | Physical coordinates | As is |
 
-macOS ではポイントに戻して計算し、論理座標で置く。拡大率の違うモニターが並ぶと、返ってきた値のままでは
-カーソルがどのモニターにあるかを取り違える。
+On macOS, the values are converted back to points for the calculation, and the window is placed in logical coordinates. When monitors with different scale factors are side by side,
+using the returned values as they are gets wrong which monitor the cursor is on.
 
-### 配色
+### Colors
 
-ダークテーマのみ。OS の外観設定には従わない (`tauri.conf.json` の `theme: "Dark"`、ページの `color-scheme: dark`)。
+Dark theme only. The OS appearance setting is not followed (`theme: "Dark"` in `tauri.conf.json`, `color-scheme: dark` on the page).
 
-白い背景は一瞬も見せない。
+A white background is never shown, not even for a moment.
 
-- 窓とページの背景は透明で、色が付くのは暗いパネルだけ。ページの描画前は何も見えない。
-- 透明の指定は `index.html` に直接書いてある。スタイルシートの読み込みを待たない。
-- 窓は隠したまま作る。ページの読み込みは通常その間に終わる。終わる前に窓を出した場合も、
-  透明なので何も見えない。
+- The window and page backgrounds are transparent; only the dark panel has a color. Before the page is drawn, nothing is visible.
+- Transparency is specified directly in `index.html`. It does not wait for the stylesheet to load.
+- The window is created hidden. The page usually finishes loading during that time. Even if the window is shown before it finishes,
+  it is transparent, so nothing is visible.
 
-### 操作
+### Controls
 
-| キー | 動作 |
+| Key | Action |
 |---|---|
-| 文字入力 | 絞り込む |
-| ↓ / Tab / Ctrl+N | 次の候補 (末尾の次は先頭) |
-| ↑ / Shift+Tab / Ctrl+P | 前の候補 |
-| Enter | 実行して窓を隠す |
-| Esc | 窓を隠す |
+| Typing | Filter |
+| ↓ / Tab / Ctrl+N | Next candidate (after the last comes the first) |
+| ↑ / Shift+Tab / Ctrl+P | Previous candidate |
+| Enter | Run and hide the window |
+| Esc | Hide the window |
 
-- IME の変換中のキー (確定の Enter を含む) は、ランチャーの操作として扱わない。
-- 候補の行はクリックでも実行できる。
-- Enter は、打ち終えた文字の検索結果が一覧に反映されてから実行する。
-- 1 回の表示で実行するのは 1 件だけ。Enter の連打や続けてのクリックで届いた 2 件目以降は捨てる。
-- 実行要求には表示の番号が付く。窓を閉じて開き直したあとに届いた、前の表示での要求は捨てる。
+- Keys during IME composition (including the Enter that commits) are not treated as launcher controls.
+- A candidate row can also be run by clicking it.
+- Enter runs only after the search results for the typed text are reflected in the list.
+- Only one item is run per showing. A second or later request from repeated Enter presses or successive clicks is discarded.
+- Each run request carries the showing's number. A request from an earlier showing that arrives after the window is closed and reopened is discarded.
 
-### 読み直しのタイミング
+### When things are reloaded
 
-設定フォルダは監視していない。窓を出すたびに読み直す。
+The configuration folder is not watched. It is reloaded each time the window is shown.
 
-- `settings.yaml`: 窓を出す直前。
-- `commands/*.yaml` と使用回数: 窓を出した直後 (数百件あると、出るまでの時間に響くため)。
-- ホットキー (ランチャーとコマンドの両方): 起動時と、コマンドを読み直した直後に登録し直す。
-  つまり、ホットキーを書き換えたあとは、一度窓を出すまで新しいホットキーが効かない。
-  ランチャーのホットキーを書き換えた場合は、古いホットキーかトレイのメニューで窓を出す。
+- `settings.yaml`: just before showing the window.
+- `commands/*.yaml` and usage counts: just after showing the window (with several hundred commands, it would affect the time until the window appears).
+- Hotkeys (both the launcher's and the commands'): registered again at startup and just after the commands are reloaded.
+  This means that after changing a hotkey, the new hotkey does not work until the window has been shown once.
+  If the launcher's hotkey was changed, show the window with the old hotkey or from the tray menu.
 
-ホットキーが重なった場合は、ランチャーのものを優先し、コマンド同士は id の順で先のものを使う。
-書き方が違っても同じキーの組み合わせなら重なりとみなす (`Ctrl+Alt+C` と `ctrl+alt+KeyC`)。
-読めないホットキー、重なったホットキー、登録できないホットキーは、エラーとして表示する。
-ただし macOS では、他のアプリが使っているホットキーでも登録に成功することがある (Alfred で確認)。
-登録できなかったものは、次に登録し直すときにもう一度試す。
+When hotkeys overlap, the launcher's takes priority, and between commands the one that comes first by id is used.
+Different spellings of the same key combination count as an overlap (`Ctrl+Alt+C` and `ctrl+alt+KeyC`).
+Unreadable, overlapping and unregistrable hotkeys are shown as errors.
+However, on macOS, registering a hotkey that another app uses can succeed (confirmed with Alfred).
+Hotkeys that could not be registered are tried again the next time hotkeys are registered.
 
-### エラーの表示
+### Error display
 
-窓の下部に赤い帯で出す。
+Errors are shown in a red band at the bottom of the window.
 
-- 壊れているコマンドファイル (`commands/x.yaml: line 3, column 1: ...`)。有効なファイルは隠れない。
-- `settings.yaml` の問題。読めない間は、最後に読めた設定を使い続ける。
-- ホットキーが読めない・重なっている・登録できない理由。
-- 実行の失敗。計画を立てられない場合 (その OS で使えない種類など) は窓を開いたまま出す。
-  起動に失敗した場合 (プロセスを起動できない、1Password が秘密情報を返さない) は、隠した窓をもう一度出して知らせる。
-  このときはキー入力を奪わない (利用者は別のアプリで打鍵しているかもしれない)。知らせの窓は、
-  透明な部分をクリックするか、パネルをクリックしてから Esc で隠れる。ホットキーが使える状態ならホットキーでも隠れる。
-  起動時にホットキーの問題を知らせる窓も同じ扱い。
-  キー入力を奪わずに窓を出せるのは macOS のパネルだけなので、Windows では知らせの窓を出さず、
-  次に利用者が窓を出したときに表示する。
+- Broken command files (`commands/x.yaml: line 3, column 1: ...`). Valid files are not hidden.
+- Problems in `settings.yaml`. While it cannot be read, the last settings that could be read stay in use.
+- The reason a hotkey is unreadable, overlapping or unregistrable.
+- Run failures. If a plan cannot be made (for example, a type that is not available on that OS), it is shown with the window kept open.
+  If launching fails (the process cannot be started, 1Password does not return the secret), the hidden window is shown again to report it.
+  In this case key input is not taken (the user may be typing in another app). The notification window
+  hides when its transparent area is clicked, or when the panel is clicked and then Esc is pressed. If the hotkey is usable, the hotkey also hides it.
+  The window that reports hotkey problems at startup is handled the same way.
+  Only the macOS panel can show a window without taking key input, so on Windows the notification window is not shown;
+  the error is shown the next time the user shows the window.
 
-起動は別スレッドで行う。1Password の認証を待つ間、窓は隠れていて操作を止めない。
+Launching is done on a separate thread. While waiting for 1Password authentication, the window stays hidden and does not block anything.
 
-## ウィジェット (予定)
+## Widgets (planned)
 
-ランチャー窓の入力欄の上側に、情報を表示する部品を並べられるようにする。
+Allow parts that show information to be placed above the input field of the launcher window.
 
-- 種類: 時計、CPU 使用率、CPU 温度、メモリ使用量、ファイルの内容、スクリプトの実行結果。
-- 何をどの順に置くかを設定ファイルで決められる。
+- Kinds: clock, CPU usage, CPU temperature, memory usage, file contents, script output.
+- Which ones to place, and in what order, is set in a configuration file.
 
-未決定:
+Undecided:
 
-- 設定の置き場所。マシンごとに変えたいもの (温度センサーの有無など) があるので、
-  Git で共有する `settings.yaml` に入れるか、別ファイルにするか。
-- 更新の頻度と、窓が隠れている間に更新を止めるかどうか。
-- CPU 温度の取得方法。macOS (Apple Silicon) には公開 API が無い。
+- Where the settings live. Some things should differ per machine (such as whether a temperature sensor exists), so
+  whether to put them in `settings.yaml`, which is shared with Git, or in a separate file.
+- How often to update, and whether to stop updating while the window is hidden.
+- How to get the CPU temperature. macOS (Apple Silicon) has no public API for it.
 
-## 設定フォルダ
+## Configuration folder
 
 ```
-~/.config/flintkey/            どの OS でも同じ (Windows は %USERPROFILE%\.config\flintkey)
+~/.config/flintkey/            The same on every OS (on Windows, %USERPROFILE%\.config\flintkey)
 ├── settings.yaml
 └── commands/
-    ├── open-github.yaml       1 コマンド 1 ファイル。ファイル名 (拡張子を除く) が id
+    ├── open-github.yaml       One command per file. The file name (without the extension) is the id
     └── deploy-blog.yaml
 ```
 
-- `commands/` 直下の `*.yaml` だけを読む。`.` で始まるファイル、`.yml`、サブフォルダは無視する。
-- 環境変数 `FLINTKEY_CONFIG_DIR` でフォルダを差し替えられる。
+- Only `*.yaml` directly under `commands/` is read. Files starting with `.`, `.yml` files and subfolders are ignored.
+- The folder can be replaced with the environment variable `FLINTKEY_CONFIG_DIR`.
 
-Git でコンフリクトしにくくするための決まり:
+Rules that make Git conflicts less likely:
 
-| 決まり | 理由 |
+| Rule | Reason |
 |---|---|
-| 1 コマンド 1 ファイル | 2 台で別々にコマンドを足しても、同じファイルに触れない |
-| 並び順を設定に持たない | 順序のリストは真っ先にコンフリクトする。順位は検索時に計算する |
-| 使用回数などの状態は設定フォルダの外に置く | 起動のたびに差分が出るのを避ける |
-| 保存時は意味が変わったキーだけ書き換える | 手書きのコメント・空行・クォートを残し、差分を最小にする |
-| 新しいキーは決まった順序の位置に挿入する | 2 台が別のキーを足したときに、変更行が重なりにくい |
-| 新規ファイルは決まった書式 (キー順固定、インデント 2、LF、末尾改行) | 誰が作っても同じテキストになる |
+| One command per file | Two machines adding different commands do not touch the same file |
+| No ordering in the configuration | An ordered list is the first thing to conflict. Ranking is computed at search time |
+| State such as usage counts lives outside the configuration folder | Avoids a diff on every launch |
+| On save, only keys whose meaning changed are rewritten | Keeps hand-written comments, blank lines and quotes, and keeps the diff minimal |
+| New keys are inserted at a position given by a fixed order | When two machines add different keys, the changed lines are less likely to overlap |
+| New files use a fixed format (fixed key order, indent 2, LF, trailing newline) | The text is the same no matter who creates it |
 
-状態は `~/.local/state/flintkey/` (Windows は `%LOCALAPPDATA%\flintkey\`) に置く。
-環境変数 `FLINTKEY_STATE_DIR` で差し替えられる。
+State is kept in `~/.local/state/flintkey/` (on Windows, `%LOCALAPPDATA%\flintkey\`).
+It can be replaced with the environment variable `FLINTKEY_STATE_DIR`.
 
-## コマンドファイル
+## Command files
 
 ```yaml
 title: Deploy blog
@@ -235,50 +235,52 @@ when:
   os: [macos, linux]
 ```
 
-共通キー:
+Common keys:
 
-| キー | 必須 | 内容 |
+| Key | Required | Description |
 |---|---|---|
-| `title` | 必須 | 一覧に出す名前 |
-| `type` | 必須 | `url` / `app` / `script` / `terminal` |
-| `keyword` | | 完全一致で入力すると最優先で選ばれる短い語。別名を持たせるときはリスト (`[today, 今日]`) |
-| `hotkey` | | 窓を出さずにこのコマンドを実行するグローバルショートカット (書式は下記) |
-| `pin` | | `true` なら、検索欄が空のとき先頭に並べる |
-| `tags` | | 分類。1 つなら文字列、複数ならリスト。設定 UI での絞り込みとまとまりに使う。検索の対象ではない |
-| `when.os` | | 出す OS。`macos` / `windows` / `linux`。1 つなら文字列、複数ならリスト。省略時は全 OS |
+| `title` | Required | The name shown in the list |
+| `type` | Required | `url` / `app` / `script` / `terminal` |
+| `keyword` | | A short word that is chosen first when typed as an exact match. For aliases, use a list (`[today, 今日]`) |
+| `hotkey` | | A global shortcut that runs this command without showing the window (format below) |
+| `pin` | | If `true`, the command is listed first when the search field is empty |
+| `tags` | | Categories. A string for one, a list for several. Used for filtering and grouping in the settings UI. Not searched |
+| `when.os` | | The OSes it is shown on. `macos` / `windows` / `linux`. A string for one, a list for several. All OSes if omitted |
 
-`type` ごとのキー:
+Keys per `type`:
 
-| type | キー | 内容 |
+| type | Keys | Description |
 |---|---|---|
-| `url` | `url` (必須) | スキーム付きの URL。`https://` のほか `claude://` などの独自スキームも可 |
-| `app` | `app` (必須)、`args` | アプリ名かパス。`args` は文字列のリスト |
-| `script` | `run` (必須)、`cwd`、`env` | シェルで実行するコマンド。`env` の値に `op://` の参照を書ける |
-| `terminal` | `run` (必須)、`cwd` | 端末アプリを開いて実行するコマンド |
+| `url` | `url` (required) | A URL with a scheme. Besides `https://`, custom schemes such as `claude://` are allowed |
+| `app` | `app` (required), `args` | An app name or path. `args` is a list of strings |
+| `script` | `run` (required), `cwd`, `env` | A command run in a shell. `env` values can be `op://` references |
+| `terminal` | `run` (required), `cwd` | A command run in a newly opened terminal app |
 
-`hotkey` の書式: 修飾キーとキーを `+` でつなぐ。大文字小文字は区別しない。
+`hotkey` format: modifier keys and a key joined with `+`. Case-insensitive.
 
-- 修飾キー: `ctrl` (`control`)、`alt` (`option`)、`shift`、`cmd` (`command`、`super`。Windows では Windows キー)
-- キー: 英字、数字、`space`、`enter`、`tab`、`escape`、`f1`〜`f24`、矢印 (`up` など)、記号 (`quote`、`comma`、`slash` など)
+- Modifier keys: `ctrl` (`control`), `alt` (`option`), `shift`, `cmd` (`command`, `super`; the Windows key on Windows)
+- Keys: letters, digits, `space`, `enter`, `tab`, `escape`, `f1`–`f24`, arrows (`up` etc.), symbols (`quote`, `comma`, `slash` etc.)
 
-`settings.yaml` の `hotkey` も同じ書式。書式の検証はデスクトップアプリが行う (コアは文字列として持つだけ)。
-コマンドのホットキーは、修飾キーが必要 (F キーだけは単独で使える)。修飾キーの無い `a` を登録できる OS があり、
-登録できると別のアプリで `a` を打つたびにコマンドが動くため。
+The `hotkey` in `settings.yaml` uses the same format. The format is validated by the desktop app (the core only keeps it as a string).
+Command hotkeys need a modifier key (only F keys can be used alone). Some OSes allow registering `a` without a modifier,
+and if that registration succeeds, the command would run every time `a` is typed in another app.
 
-`tags` の `/` に特別な意味は無い。Alfred から移したコマンドには、ワークフロー名 (`TORICO/URL` など) がそのまま 1 つのタグとして付く。
+`/` in `tags` has no special meaning. Commands migrated from Alfred get the workflow name (such as `Work/URLs`) as a single tag, unchanged.
 
-検証:
+Validation:
 
-- `keyword` と `tags` の、空の値と重複はエラーにする。
-- 知らないキー、型の違う値、`type` に合わないキー (`type: url` に `cwd` など) はエラーにする。
-  値の無いキー (`cwd:`) は、キーが無いのと同じに扱う。`env` の値は空でもよい。
-- ルール違反 (必須キーの欠落、`type` に合わないキー、`title` `keyword` `url` `app` `run` `cwd` の
-  空の値、スキームの無い URL、知らない OS 名、不正な環境変数名) は、見つかったものをすべて返す。位置が決まるものには行と桁を付ける (必須キーの欠落のように、位置が無いものもある)。
-- YAML として読めない、知らないキーがある、値の型が違う、のいずれかの場合は、最初の 1 件だけを
-  行と桁付きで返す。
-- 壊れたファイルが 1 つあっても、他のコマンドは読み込む。
-- YAML 1.2 として読む。`title: no` や `keyword: on` は文字列になる。`keyword: 1` のような数も文字列として受け取る。
-  `pin: yes` のように真偽値を期待するキーでは、`yes` / `no` / `on` / `off` / `y` / `n` も真偽値として受け付ける。
+- Empty values and duplicates in `keyword` and `tags` are errors.
+- Unknown keys, values of the wrong type, and keys that do not fit the `type` (such as `cwd` with `type: url`) are errors.
+  A key without a value (`cwd:`) is treated the same as a missing key. `env` values may be empty.
+- Rule violations (a missing required key, a key that does not fit the `type`, an empty value in `title` `keyword` `url` `app` `run` `cwd`,
+  a URL without a scheme, an unknown OS name, an invalid environment variable name) are all returned. Those with a known position get a line and column (some, such as a missing required key, have no position).
+- If the file cannot be read as YAML, has an unknown key, or has a value of the wrong type, only the first problem is
+  returned, with its line and column.
+- One broken file does not stop the other commands from loading.
+- Files are read as YAML 1.2. `title: no` and `keyword: on` become strings. Values that look like numbers are kept
+  exactly as written (`keyword: 1.0` stays `1.0`, `keyword: +1` stays `+1`).
+  For keys that expect a boolean, such as `pin: yes`, `yes` / `no` / `on` / `off` / `y` / `n` and quoted `"true"` / `"false"`
+  are also accepted as booleans.
 
 ## settings.yaml
 
@@ -290,158 +292,158 @@ terminal:
   app: terminal
 ```
 
-| キー | 既定値 | 内容 |
+| Key | Default | Description |
 |---|---|---|
-| `hotkey` | `alt+space` | ランチャーを出すグローバルショートカット |
+| `hotkey` | `alt+space` | The global shortcut that shows the launcher |
 | `window.display` | `cursor` | `cursor` / `primary` |
-| `terminal.app` | OS 標準 | `terminal` (macOS の Terminal.app) / `windows-terminal` |
+| `terminal.app` | OS default | `terminal` (Terminal.app on macOS) / `windows-terminal` |
 
-ファイルが無い、または空なら既定値になる。
+If the file is missing or empty, the defaults are used.
 
-## 保存
+## Saving
 
-フォームからの保存 (`Store::save_command`) は、ファイルに対して次のどれかを行う。
+Saving from the form (`Store::save_command`) does one of the following to the file.
 
-| 結果 | 条件 |
+| Result | Condition |
 |---|---|
-| `Unchanged` | ファイルがすでに同じ意味。書き込まない |
-| `Created` | ファイルが無かった。決まった書式で作る |
-| `Edited` | 意味が変わったキーだけを書き換えた。コメントと書式は残る |
-| `Rewritten` | 決まった書式で全体を書き直した。コメントは失われる |
+| `Unchanged` | The file already has the same meaning. Nothing is written |
+| `Created` | There was no file. It is created in the fixed format |
+| `Edited` | Only the keys whose meaning changed were rewritten. Comments and formatting are kept |
+| `Rewritten` | The whole file was rewritten in the fixed format. Comments are lost |
 
-- キーの比較はテキストではなく意味で行う。値が同じキーには書き込まない
-  (書き込むとクォートの書き方が正規化され、無関係な差分が出るため)。
-- その場編集の結果は読み直して検証し、要求したコマンドと同じ意味になっていなければ `Rewritten` に切り替える。
-  元のファイルがコマンドとして無効だった場合も `Rewritten` になる。
-- 生の YAML からの保存 (`Store::save_command_source`) は、コマンドとして無効なテキストを拒否する。
-- フォームからの保存は、書き込む前にテキストを読み直し、同じコマンドとして読めなければ拒否する
-  (空のタイトルなど、無効な値を持つコマンドでファイルを壊さないため)。
-- 書き込みは一時ファイルに書いてからリネームする。
-- id はファイル名になるので、パス区切り・`:`・先頭の `.` を含むものは拒否する。
+- Keys are compared by meaning, not by text. Keys with the same value are not written
+  (writing them would normalize the quoting and produce unrelated diffs).
+- The result of the in-place edit is read back and validated; if it does not have the same meaning as the requested command, the save switches to `Rewritten`.
+  It is also `Rewritten` if the original file was not a valid command.
+- Saving from raw YAML (`Store::save_command_source`) rejects text that is not a valid command.
+- Saving from the form reads the text back before writing, and rejects the save if it cannot be read as the same command
+  (so that a command with an invalid value, such as an empty title, does not break the file).
+- Writes go to a temporary file, which is then renamed.
+- The id becomes the file name, so ids containing a path separator, `:`, or a leading `.` are rejected.
 
-読み込みは `serde-saphyr`、その場編集は `yaml-edit` を使う。
+Reading uses `serde-saphyr`, and in-place editing uses `yaml-edit`.
 
-## 秘密情報
+## Secrets
 
-- 設定には参照だけを書く: `op://<vault>/<item>/<field>`。
-- 実行の直前に 1Password CLI (`op inject`) で解決し、子プロセスの環境変数として渡す。
-- 1 回の実行に必要な参照は 1 回の `op inject` でまとめて解決する (ロック解除の確認を 1 回にするため)。
-- 実行計画 (`launch::plan`) は参照を解決しない。計画を表示するだけで 1Password のロック解除を
-  求めることは無い。解決するのは `launch::execute` で、解決した値は子プロセスに渡した時点で破棄する。
-- 解決した値はディスクに書かない。デバッグ出力では環境変数の名前だけを出す。
-- 解決した値が空、値の数が参照の数と合わない、参照が置き換えられずに残っている、のいずれかなら起動しない。
-- 解決にタイムアウトは無い。1Password のロック解除を待つ間は呼び出したスレッドが止まるので、
-  UI スレッドから呼ばない。
-- `op` は `/opt/homebrew/bin` と `/usr/local/bin` から探す (GUI アプリはシェルの PATH を引き継がないため)。
+- Only references are written in the configuration: `op://<vault>/<item>/<field>`.
+- They are resolved with the 1Password CLI (`op inject`) just before running, and passed to the child process as environment variables.
+- All references needed for one run are resolved with a single `op inject` (so the unlock prompt appears once).
+- The run plan (`launch::plan`) does not resolve references. Just showing a plan never asks
+  to unlock 1Password. Resolution happens in `launch::execute`, and the resolved values are discarded once they are passed to the child process.
+- Resolved values are not written to disk. Debug output shows only the environment variable names.
+- The command is not launched if a resolved value is empty, the number of values does not match the number of references, or a reference remains unreplaced.
+- Resolution has no timeout. The calling thread blocks while waiting for 1Password to be unlocked, so
+  do not call it from the UI thread.
+- `op` is looked up in `/opt/homebrew/bin` and `/usr/local/bin` (GUI apps do not inherit the shell's PATH).
 
-## アクションの実行
+## Running actions
 
 | type | macOS | Windows | Linux |
 |---|---|---|---|
-| `url` | OS に渡す (`open`) | OS に渡す | OS に渡す |
-| `app` | `open -a <app> [--args ...]` | 引数なしは OS に渡す。引数ありは直接起動 | 直接起動 |
+| `url` | Passed to the OS (`open`) | Passed to the OS | Passed to the OS |
+| `app` | `open -a <app> [--args ...]` | Without arguments, passed to the OS. With arguments, launched directly | Launched directly |
 | `script` | `$SHELL -l -c <run>` | `powershell.exe -NoProfile -Command <run>` | `$SHELL -l -c <run>` |
-| `terminal` | Terminal.app (AppleScript) | `wt.exe [-d <cwd>] powershell.exe -NoExit -Command <run>` | 未対応 |
+| `terminal` | Terminal.app (AppleScript) | `wt.exe [-d <cwd>] powershell.exe -NoExit -Command <run>` | Not supported |
 
-- `cwd` と `app` の先頭の `~` はホームディレクトリに展開する (`app` はシェルを通さずに渡すため)。
-- macOS のスクリプトは、`PATH` に `/opt/homebrew/bin` と `/usr/local/bin` が無ければ先頭に足す。
-  Dock から起動したアプリの `PATH` にはこれらが入っていないため。コマンドが `env` で `PATH` を
-  指定している場合は足さない。
-- `-l` を付けるのは zsh / bash / fish / ksh だけ。
-- Terminal.app へはコマンドラインを AppleScript の引数として渡す (ソースに埋め込まない)。
-  Terminal が起動していなかった場合は、起動時に開く空のウインドウを使う。
-- 実行は終了を待たない。
+- A leading `~` in `cwd` and `app` is expanded to the home directory (`app` is passed without going through a shell).
+- On macOS, scripts get `/opt/homebrew/bin` and `/usr/local/bin` prepended to `PATH` if they are missing.
+  The `PATH` of an app launched from the Dock does not contain them. If the command sets `PATH` in `env`,
+  they are not added.
+- `-l` is added only for zsh / bash / fish / ksh.
+- The command line is passed to Terminal.app as an AppleScript argument (not embedded in the source).
+  If Terminal was not running, the empty window it opens at launch is used.
+- Running does not wait for the command to finish.
 
-制約:
+Limitations:
 
-- 起動に使う補助プロセス (`osascript`、`open` など) を始められたら成功として扱う。その後の失敗
-  (macOS が Terminal.app の操作を許可しなかった、など) は検出しない。スクリプトの出力も捨てる。
-- `terminal` で `cwd` を指定すると `cd <cwd> && <run>` を端末に入力する。`run` が `;` や改行で
-  複数の文に分かれている場合、`cd` に失敗しても 2 つ目以降の文は実行される。
-- `cwd` の引用は POSIX シェルの規則による。fish では、バックスラッシュを含むパスを正しく渡せない。
+- Once the helper process used for launching (`osascript`, `open` etc.) has started, the run is treated as a success. Later failures
+  (such as macOS not allowing control of Terminal.app) are not detected. Script output is also discarded.
+- With `terminal`, specifying `cwd` types `cd <cwd> && <run>` into the terminal. If `run` is split into
+  several statements by `;` or newlines, the second and later statements run even if `cd` fails.
+- Quoting of `cwd` follows POSIX shell rules. In fish, a path containing a backslash cannot be passed correctly.
 
-- iTerm2 は未対応。ウインドウを作った直後に文字を送る方式では、シェルの起動処理が端末に出す
-  問い合わせの応答と入力が混ざり、コマンドが壊れることがある。
-- 端末に「入力だけして実行しない」動作は未対応。
+- iTerm2 is not supported. With the approach of sending text right after creating a window, the input gets mixed with the replies to
+  queries that the shell's startup sends to the terminal, and the command can be broken.
+- "Type into the terminal without running" is not supported.
 
-## 検索の順位
+## Search ranking
 
-入力が空のとき: ピン留め → 使用回数の多い順 → タイトル順。
+When the input is empty: pinned → most used → by title.
 
-入力があるとき:
+When there is input:
 
-1. `keyword` (別名のどれか) が入力と完全一致 (大文字小文字を区別しない)
-2. `keyword` (別名のどれか) が入力で始まる
-3. `title` か `keyword` にあいまい一致 (文字が飛んでいてもよい。単語の順序は問わない)
+1. A `keyword` (any of its aliases) exactly matches the input (case-insensitive)
+2. A `keyword` (any of its aliases) starts with the input
+3. A fuzzy match on `title` or `keyword` (characters may be skipped; word order does not matter)
 
-同じ層の中は、3 では一致の質、次に使用回数、タイトルの順。1 と 2 では使用回数、タイトルの順。
-一致しないコマンドは出さない。入力の `!` や `^` などの記号は、そのままの文字として照合する。
+Within the same tier: for 3, match quality, then usage count, then title. For 1 and 2, usage count, then title.
+Commands that do not match are not shown. Symbols in the input such as `!` and `^` are matched as literal characters.
 
-使用回数は状態フォルダの `usage.json` に持つ。
+Usage counts are kept in `usage.json` in the state folder.
 
-## Alfred からの移行
+## Migrating from Alfred
 
 ```shell
-flintkey import-alfred            # 作るファイルと、変換しなかったものの一覧を出す (何も書かない)
-flintkey import-alfred --write    # 設定フォルダの commands/ に書く
+flintkey import-alfred            # List the files to create and what was not converted (writes nothing)
+flintkey import-alfred --write    # Write to commands/ in the configuration folder
 flintkey import-alfred --from <Alfred.alfredpreferences>
 ```
 
-`--from` が無ければ、`~/Library/Application Support/Alfred/prefs.json` の `current` (同期フォルダ) を読む。
-ワークフローの `info.plist` は `plutil` で JSON にして読むので、macOS でしか動かない。
+Without `--from`, it reads `current` (the sync folder) from `~/Library/Application Support/Alfred/prefs.json`.
+Workflow `info.plist` files are converted to JSON with `plutil` and then read, so this only works on macOS.
 
-変換するのは「キーワードかホットキー 1 つ → アクション 1 つ」のつながり。
+What is converted is a "one keyword or hotkey → one action" connection.
 
 | Alfred | Flintkey |
 |---|---|
-| キーワード (`a||b` の別名を含む) | `keyword` (別名はリスト)。タイトルは Alfred のタイトル |
-| ホットキー | `hotkey`。同じアクションにキーワード 1 つとホットキー 1 つがつながっていれば 1 つのコマンドにまとめる |
-| Open URL | `type: url`。ブラウザを指定していれば `open -b <バンドル ID> <URL>` の `type: script` |
-| Launch Apps / Files (1 つ) | アプリ (`.app`) なら `type: app`。フォルダや書類なら `open <パス>` の `type: script` |
-| Open File (フォルダ) | `open <パス>` の `type: script` |
-| Run Script (zsh / bash / AppleScript / JavaScript)、Run NSAppleScript | 元のインタプリタ (`/bin/zsh` など) にヒアドキュメントで渡す `type: script` |
+| Keyword (including `a||b` aliases) | `keyword` (aliases as a list). The title is the Alfred title |
+| Hotkey | `hotkey`. If one keyword and one hotkey connect to the same action, they are merged into one command |
+| Open URL | `type: url`. If a browser is specified, `type: script` with `open -b <bundle ID> <URL>` |
+| Launch Apps / Files (one item) | `type: app` for an app (`.app`). For a folder or document, `type: script` with `open <path>` |
+| Open File (folder) | `type: script` with `open <path>` |
+| Run Script (zsh / bash / AppleScript / JavaScript), Run NSAppleScript | `type: script` that passes the script to the original interpreter (`/bin/zsh` etc.) as a here-document |
 | Terminal Command | `type: terminal` |
-| Browse in Terminal | `cd <パス>` の `type: terminal` |
+| Browse in Terminal | `type: terminal` with `cd <path>` |
 
-- URL 以外のコマンドには `when.os: macos` を付ける。タグにはワークフロー名を付ける。
-- id はキーワード (無ければアプリ名) から作る。小文字にそろえ、重なったら `-2` を付ける。
-  ワークフロー名の順に処理するので、同じ Alfred の設定からは何度でも同じ id になる。
-- 同じ id のファイルがすでにあれば、中身が違っても上書きしない (一覧に `exists` と出る)。
-- Alfred のホットキーは Alfred 側にも残る。macOS では、別のアプリが使っているホットキーも登録に成功する
-  (Alfred が `ctrl+alt+cmd+c` を持ったままで、Flintkey の登録はエラーにならなかった)。重なりは検出できないので、
-  Alfred のワークフローを無効にする必要がある。両方が持っているときにどちらが反応するかは確かめていない。
-- スクリプトが `token`、`password`、`.env` などに触れていれば、Git で共有する前に確かめるよう一覧で注意を出す。
-- ワークフローが変数を持っていれば、スクリプトにその変数が渡らない旨の注意を出す (変数は移さない。秘密情報を含みうるため)。
-- 変換したスクリプトは、ヒアドキュメントを読めるシェル (zsh、bash) を前提にしている。
-  Flintkey は `run` をログインシェル (`$SHELL`) に渡すので、fish ではヒアドキュメントの部分が動かない。
-- Run NSAppleScript のコードは Alfred が呼ぶ `on alfred_script(q)` ハンドラなので、末尾にその呼び出しを足す。
-- Launch Apps / Files の「前面にあれば隠す」(toggle) は移せない。注意を出し、前面に出すだけのコマンドにする。
+- Commands other than URLs get `when.os: macos`. The workflow name is added as a tag.
+- The id is made from the keyword (or the app name if there is none). It is lowercased, and `-2` is added on a collision.
+  Workflows are processed in order of name, so the same Alfred configuration always gives the same ids.
+- If a file with the same id already exists, it is not overwritten even if the contents differ (the list shows `exists`).
+- Alfred's hotkeys also stay in Alfred. On macOS, registering a hotkey that another app uses succeeds
+  (with Alfred still holding `ctrl+alt+cmd+c`, Flintkey's registration did not fail). The overlap cannot be detected, so
+  the Alfred workflow needs to be disabled. Which app responds when both have the hotkey has not been checked.
+- If a script touches `token`, `password`, `.env` and so on, the list shows a warning to check it before sharing it with Git.
+- If a workflow has variables, a warning says that those variables are not passed to the script (variables are not migrated, since they may contain secrets).
+- Converted scripts assume a shell that can read here-documents (zsh, bash).
+  Flintkey passes `run` to the login shell (`$SHELL`), so with fish the here-document part does not work.
+- Run NSAppleScript code is an `on alfred_script(q)` handler that Alfred calls, so a call to it is appended at the end.
+- The "hide if frontmost" (toggle) option of Launch Apps / Files cannot be migrated. A warning is shown, and the command only brings the app to the front.
 
-変換しないもの (理由を付けて一覧に出す):
+Not converted (listed with the reason):
 
-- 引数を使うもの (`{query}` などのプレースホルダ、スクリプトの `$1` / `$@`)。Flintkey には引数がまだ無い。
-- 1 つの起点から複数のアクションへつながるもの、アクションの結果をさらに次へ渡すもの。
-- クリップボードへの出力、Script Filter / List Filter / External Trigger などの起点。
-- 修飾キーを押しながら実行したときの別の動作 (警告を出し、修飾キー無しの動作だけ変換する)。
-- 特定のアプリでだけ効くホットキー (Related Apps)。Flintkey のホットキーはどのアプリでも効く。
-- 無効にしてあるワークフロー。
+- Anything that uses arguments (placeholders such as `{query}`, `$1` / `$@` in scripts). Flintkey does not have arguments yet.
+- One trigger that connects to several actions, or an action whose result is passed on to another.
+- Output to the clipboard, and triggers such as Script Filter / List Filter / External Trigger.
+- Alternative behavior when run with a modifier key held (a warning is shown, and only the behavior without a modifier is converted).
+- Hotkeys that work only in specific apps (Related Apps). Flintkey's hotkeys work in every app.
+- Disabled workflows.
 
-## プラグイン (予定)
+## Plugins (planned)
 
-外部プロセス型にする (言語を問わない、落ちても本体が止まらない、Windows でも動く)。
+Plugins will be external processes (any language, a crash does not stop the main app, works on Windows too).
 
-- マニフェストに「候補を出すコマンド」と「候補ごとのアクション (修飾キーで選ぶ)」を書く。
-- 候補を出すコマンドは JSON の配列を返す。本体はウインドウ表示時に 1 回呼んで結果を保持し、
-  絞り込みは本体の検索で行う (キー入力ごとにプロセスを起動すると遅い)。
-- development-starter の機能 (`~/workspace` のプロジェクトを選んでエディタや GitHub を開く) は、
-  標準機能ではなくこのプラグインとして載せる。
+- The manifest describes "a command that produces candidates" and "actions per candidate (chosen with modifier keys)".
+- The candidate command returns a JSON array. The main app calls it once when the window is shown and keeps the result;
+  filtering is done by the main app's search (starting a process on every key press would be slow).
+- The development-starter feature (pick a project in `~/workspace` and open it in an editor or on GitHub) is
+  shipped as one of these plugins, not as a built-in feature.
 
-## 設定 UI (予定)
+## Settings UI (planned)
 
-- 左にコマンドの一覧 (検索できる)、右にフォーム。フォームの横に YAML の生表示を並べ、
-  どちらを編集しても他方に反映する。
-- 保存時に検証し、エラーを行番号付きで出す。
-- その場でコマンドを試せる「テスト実行」。
-- ホットキーは押して記録する。
-- ファイルを Finder / エディタで開くボタン。
-- 設定フォルダの変更を監視して、自動で再読み込みする (`git pull` や手編集がすぐ反映される)。
+- A command list on the left (searchable) and a form on the right. The raw YAML is shown next to the form,
+  and editing either one updates the other.
+- Validation on save, with errors shown with line numbers.
+- "Test run" to try a command on the spot.
+- Hotkeys are recorded by pressing them.
+- Buttons to open the file in Finder / an editor.
+- Watch the configuration folder for changes and reload automatically (so `git pull` and manual edits take effect immediately).

@@ -14,6 +14,6 @@ serde_json = "1"
 spike-common = { path = "../common" }
 
 [features]
-# Tauri CLI を使わないと誰もこれを有効にせず、アプリが開発サーバーを探しに行ってしまう。
+# Without the Tauri CLI nothing enables this, and the app goes looking for a dev server.
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

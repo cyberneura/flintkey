@@ -8,14 +8,14 @@ export interface KeyInput {
   shiftKey: boolean;
 }
 
-/** IME が変換中のキーにつける keyCode。 */
+/** The keyCode an IME gives keys during composition. */
 const IME_PROCESSING = 229;
 
 /**
- * 入力欄で押されたキーの意味。ランチャーが扱わないキーは `null` (入力欄にそのまま渡す)。
+ * What a key pressed in the input means. Keys the launcher does not handle are `null` (left to the input).
  *
- * 変換中のキーは扱わない。WebKit は変換を確定する Enter を `isComposing: false` で送ってくるので、
- * keyCode も見る (見ないと、日本語を確定した瞬間にコマンドが実行される)。
+ * Keys during IME composition are ignored. WebKit sends the Enter that commits composition with
+ * `isComposing: false`, so keyCode is checked too (otherwise committing Japanese text would run a command).
  */
 export function intentFor(input: KeyInput): Intent | null {
   if (input.isComposing || input.keyCode === IME_PROCESSING) {
@@ -41,7 +41,7 @@ export function intentFor(input: KeyInput): Intent | null {
   }
 }
 
-/** 選択を `delta` だけ動かした添字。端で反対側へ回る。 */
+/** The index after moving the selection by `delta`. Wraps around at the ends. */
 export function moveSelection(selected: number, count: number, delta: number): number {
   if (count === 0) {
     return 0;

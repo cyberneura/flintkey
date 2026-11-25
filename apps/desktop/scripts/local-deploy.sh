@@ -1,32 +1,32 @@
 #!/bin/sh
-# .app をビルドして署名・公証し、/Applications に置く。起動中の Flintkey は止めない。
+# Builds, signs and notarizes the .app and puts it in /Applications. Does not stop a running Flintkey.
 set -eu
 
 cd "$(dirname "$0")/.."
 [ "$(uname -s)" = Darwin ] || { echo "macOS is required." >&2; exit 1; }
-# notarize-app.sh がこの証明書での署名を要求するので、環境変数では変えられない。
+# notarize-app.sh requires a signature with this certificate, so it cannot be changed by an environment variable.
 SIGN_IDENTITY="Developer ID Application: Cyberneura K.K. (2YN5TLNQ9J)"
 NOTARY_PROFILE="${NOTARY_PROFILE:-cyberneura-notary}"
 DEST_DIR="${DEST_DIR:-/Applications}"
 DEST_DIR="$(cd "$DEST_DIR" && pwd -P)"
 product_name="$(node -p "require('./src-tauri/tauri.conf.json').productName")"
-# Cargo のワークスペースなので、ビルド結果はリポジトリ直下の target に出る。
+# This is a Cargo workspace, so build output goes to target at the repository root.
 target_dir="$(cd ../.. && pwd -P)/target"
 bundle="$target_dir/release/bundle/macos/${product_name}.app"
 dest="$DEST_DIR/${product_name}.app"
 [ "$bundle" != "$dest" ] || { echo "Build and installation directories must differ." >&2; exit 1; }
 
-# 公証の認証情報が無いなら、ビルドに時間を使う前に失敗させる。
+# Without notarization credentials, fail before spending time on the build.
 xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" --output-format json >/dev/null
 (
-  # 公証はビルドのあとに Keychain の認証情報で 1 回だけ行う。Tauri に公証させない。
+  # Notarize once after the build using the Keychain credentials. Do not let Tauri notarize.
   unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID APPLE_API_KEY APPLE_API_ISSUER APPLE_API_KEY_PATH
   APPLE_SIGNING_IDENTITY="$SIGN_IDENTITY" CARGO_TARGET_DIR="$target_dir" \
     pnpm exec tauri build --bundles app --config '{"bundle":{"macOS":{"hardenedRuntime":true}}}'
 )
 bash scripts/notarize-app.sh "$bundle" "$NOTARY_PROFILE"
 
-# 同じボリュームに一度置いてから mv で入れ替える。失敗したら前の版を戻す。
+# Stage on the same volume, then swap in with mv. On failure, restore the previous version.
 staging="$(mktemp -d "$DEST_DIR/.notarized-deploy.XXXXXX")"
 cleanup() {
   if [ ! -e "$dest" ] && [ ! -L "$dest" ] && [ -e "$staging/previous.app" ]; then

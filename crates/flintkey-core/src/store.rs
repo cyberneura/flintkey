@@ -1,15 +1,15 @@
-//! ディスク上の設定フォルダ。
+//! The config folder on disk.
 //!
 //! ```text
 //! ~/.config/flintkey/
 //! ├── settings.yaml
 //! └── commands/
-//!     ├── open-github.yaml     1 コマンド 1 ファイル。ファイル名が id
+//!     ├── open-github.yaml     one file per command; the file name is the id
 //!     └── deploy-blog.yaml
 //! ```
 //!
-//! 1 コマンド 1 ファイルなので、2 台のマシンが別々にコマンドを足しても同じファイルに
-//! 触れない。フォルダを Git でマージしても、解決するものが無い。
+//! With one file per command, two machines adding commands separately never touch the same
+//! file. Merging the folder in Git leaves nothing to resolve.
 
 use crate::atomic::write_atomically;
 use crate::command::{Command, parse_command};
@@ -25,12 +25,12 @@ const EXTENSION: &str = "yaml";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredCommand {
-    /// `.yaml` を除いたファイル名。
+    /// The file name without `.yaml`.
     pub id: String,
     pub command: Command,
 }
 
-/// 使えなかったコマンドファイル。
+/// A command file that could not be used.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrokenCommand {
     pub id: String,
@@ -40,9 +40,9 @@ pub struct BrokenCommand {
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct LoadedCommands {
-    /// id 順。
+    /// Sorted by id.
     pub commands: Vec<StoredCommand>,
-    /// id 順。壊れたファイルがあっても、有効なファイルは隠れない。
+    /// Sorted by id. A broken file does not hide the valid ones.
     pub broken: Vec<BrokenCommand>,
 }
 
@@ -56,15 +56,15 @@ pub enum StoreError {
     Io(#[from] io::Error),
 }
 
-/// コマンドの保存がファイルに対して行ったこと。
+/// What saving a command did to its file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Saved {
-    /// ファイルがすでに同じ意味だったので、書き込まなかった。
+    /// The file already meant the same thing, so nothing was written.
     Unchanged,
     Created,
-    /// 変わったキーだけを書き換えた。コメントと書式は元のまま。
+    /// Only the changed keys were rewritten. Comments and formatting are kept.
     Edited,
-    /// 決まった書式でファイル全体を書き直した。コメントは失われる。
+    /// The whole file was rewritten in the fixed format. Comments are lost.
     Rewritten,
 }
 
@@ -72,7 +72,7 @@ pub struct Store {
     root: PathBuf,
 }
 
-/// id はファイル名になるので、無害なパス要素ちょうど 1 つでなければならない。
+/// The id becomes a file name, so it must be exactly one harmless path component.
 fn validate_id(id: &str) -> Result<(), StoreError> {
     let harmless = !id.is_empty()
         && !id.starts_with('.')
@@ -99,7 +99,7 @@ impl Store {
         Ok(self.root.join(COMMANDS_DIR).join(format!("{id}.{EXTENSION}")))
     }
 
-    /// `commands/*.yaml` をすべて読む。フォルダが無ければ空の設定として扱う。
+    /// Reads every `commands/*.yaml`. A missing folder is treated as an empty config.
     pub fn load_commands(&self) -> io::Result<LoadedCommands> {
         let entries = match std::fs::read_dir(self.root.join(COMMANDS_DIR)) {
             Ok(entries) => entries,
@@ -130,13 +130,13 @@ impl Store {
         Ok(loaded)
     }
 
-    /// コマンドファイルの生のテキスト。設定 UI の YAML 表示用。
+    /// The raw text of a command file, for the YAML view in the settings UI.
     pub fn read_command_source(&self, id: &str) -> Result<String, StoreError> {
         Ok(std::fs::read_to_string(self.command_path(id)?)?)
     }
 
-    /// フォームで編集したコマンドを保存する。既存ファイルは、変更に関係しない部分を
-    /// すべてそのまま残す。
+    /// Saves a command edited in the form. In an existing file, everything unrelated to the change
+    /// is kept as is.
     pub fn save_command(&self, id: &str, command: &Command) -> Result<Saved, StoreError> {
         let path = self.command_path(id)?;
         let (text, saved) = match std::fs::read_to_string(&path) {
@@ -154,10 +154,10 @@ impl Store {
             Err(error) if error.kind() == io::ErrorKind::NotFound => (document::render(command), Saved::Created),
             Err(error) => return Err(error.into()),
         };
-        // `Command` は空のタイトルのような無効な値でも組み立てられる。そのまま書くと、
-        // 次の読み込みでコマンドが一覧から消える。書く前に、読み戻せることを確かめる。
-        // テキストが変わらない場合も確かめる。無効なコマンドの書き直しが、すでに壊れている
-        // ファイルと同じテキストになることがあるため。
+        // A `Command` can be built with invalid values such as an empty title. Writing it as is would
+        // make the command vanish from the list on the next load. Check that it reads back before writing.
+        // Check even when the text is unchanged: rewriting an invalid command can produce the same text
+        // as an already broken file.
         match parse_command(&text) {
             Ok(written) if written == *command => {}
             Ok(_) => {
@@ -173,8 +173,8 @@ impl Store {
         Ok(saved)
     }
 
-    /// 生の YAML として編集したコマンドを保存する。有効なコマンドでないテキストは拒否する。
-    /// 入力ミスで、動いていたコマンドがランチャーから消えるのを防ぐため。
+    /// Saves a command edited as raw YAML. Text that is not a valid command is rejected,
+    /// so a typo cannot make a working command vanish from the launcher.
     pub fn save_command_source(&self, id: &str, source: &str) -> Result<Command, StoreError> {
         let path = self.command_path(id)?;
         let command = parse_command(source).map_err(StoreError::Invalid)?;
@@ -182,7 +182,7 @@ impl Store {
         Ok(command)
     }
 
-    /// コマンドファイルを削除する。存在しないファイルの削除はエラーにしない。
+    /// Deletes a command file. Deleting a missing file is not an error.
     pub fn delete_command(&self, id: &str) -> Result<(), StoreError> {
         match std::fs::remove_file(self.command_path(id)?) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error.into()),
@@ -190,7 +190,7 @@ impl Store {
         }
     }
 
-    /// `settings.yaml` を読む。ファイルが無ければ既定値。
+    /// Reads `settings.yaml`. Defaults if the file is missing.
     pub fn load_settings(&self) -> io::Result<Result<Settings, Vec<Diagnostic>>> {
         match std::fs::read_to_string(self.root.join(SETTINGS_FILE)) {
             Ok(source) => Ok(parse_settings(&source)),
@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn command_that_would_not_load_again_is_refused_and_nothing_is_written() {
-        // Arrange: フィールドは公開なので、検証を通らない値でも組み立てられる。
+        // Arrange: the fields are public, so values that fail validation can be built.
         let (_dir, store) = store();
         let original = "# mine\ntitle: GitHub\ntype: url\nurl: https://github.com\n";
         write(&store, "commands/existing.yaml", original);
@@ -455,7 +455,7 @@ mod tests {
 
     #[test]
     fn saving_an_invalid_command_over_identical_invalid_text_is_still_refused() {
-        // Arrange: 書き直した結果が元のテキストと同じになるので、「変更なし」に見える。
+        // Arrange: the rewrite equals the original text, so it looks like "no change".
         let (_dir, store) = store();
         let source = "title: GitHub\ntype: url\nurl: github.com\n";
         write(&store, "commands/gh.yaml", source);

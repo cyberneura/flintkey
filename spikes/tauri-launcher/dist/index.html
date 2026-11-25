@@ -59,8 +59,8 @@
       const results = document.getElementById("results");
       let lastFilterUs = 0;
 
-      // 現在の DOM を含むフレームが描かれた時点で解決する。requestAnimationFrame の中から
-      // 投げたタスクは、そのフレームの描画処理の直後に実行される。
+      // Resolves once a frame containing the current DOM has been drawn. A task posted from
+      // inside requestAnimationFrame runs right after that frame's rendering work.
       function afterPaint() {
         return new Promise((resolve) => {
           requestAnimationFrame(() => {

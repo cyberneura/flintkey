@@ -1,6 +1,6 @@
 @import 'tailwindcss';
 
-/* 窓は透明で、見えるのはパネルだけ。配色はダークのみ。 */
+/* The window is transparent; only the panel is visible. Dark theme only. */
 html,
 body {
   background: transparent;

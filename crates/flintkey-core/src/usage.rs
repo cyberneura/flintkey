@@ -1,7 +1,7 @@
-//! このマシンで各コマンドを何回実行したか。
+//! How many times each command has run on this machine.
 //!
-//! これは設定ではなく状態。起動のたびに変わり、マシンごとに違うので、
-//! Git 管理する設定フォルダの外に置く。
+//! This is state, not configuration. It changes on every launch and differs per machine,
+//! so it lives outside the Git-managed config folder.
 
 use crate::atomic::write_atomically;
 use serde::{Deserialize, Serialize};
@@ -17,8 +17,8 @@ pub struct Usage {
 }
 
 impl Usage {
-    /// 使用回数のファイルを読む。ファイルが無い・壊れている場合は 0 から始める。
-    /// 回数を失っても一覧の並び順が変わるだけで、ランチャーを止める理由にはならない。
+    /// Reads the usage file. Starts from zero if the file is missing or broken.
+    /// Losing the counts only changes the list order; it is no reason to stop the launcher.
     pub fn load(path: &Path) -> Usage {
         std::fs::read_to_string(path)
             .ok()

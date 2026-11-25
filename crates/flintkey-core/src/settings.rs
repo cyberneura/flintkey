@@ -1,4 +1,4 @@
-//! `settings.yaml`: アプリ全体に関わる少数の設定。
+//! `settings.yaml`: the few settings that apply to the whole app.
 
 use crate::diagnostic::Diagnostic;
 use crate::launch::TerminalApp;
@@ -9,20 +9,20 @@ pub const DEFAULT_HOTKEY: &str = "alt+space";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
-    /// ランチャーを表示するグローバルショートカット。例: `alt+space`。
+    /// Global shortcut that shows the launcher, e.g. `alt+space`.
     pub hotkey: String,
     pub display: Display,
-    /// `None` なら OS 標準の端末を使う。
+    /// `None` uses the OS default terminal.
     pub terminal: Option<TerminalApp>,
 }
 
-/// ランチャーのウインドウを出す画面。
+/// The screen the launcher window appears on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Display {
-    /// ホットキーを押した時点でマウスポインターがある画面。
+    /// The screen with the mouse pointer when the hotkey is pressed.
     #[default]
     Cursor,
-    /// メインの画面。
+    /// The main screen.
     Primary,
 }
 
@@ -60,7 +60,7 @@ fn problem_at<T>(spanned: &Spanned<T>, message: String) -> Diagnostic {
     Diagnostic::at(spanned.referenced.line(), spanned.referenced.column(), message)
 }
 
-/// `settings.yaml` を読む。書かれていないキーは既定値になる。空のファイルも有効。
+/// Reads `settings.yaml`. Missing keys take their defaults. An empty file is valid.
 pub fn parse_settings(source: &str) -> Result<Settings, Vec<Diagnostic>> {
     let raw = match serde_saphyr::from_str::<Option<RawSettings>>(source) {
         Ok(Some(raw)) => raw,

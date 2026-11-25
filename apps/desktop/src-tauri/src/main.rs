@@ -1,6 +1,6 @@
-//! Flintkey のデスクトップアプリ。メニューバー / タスクトレイに常駐し、ホットキーでランチャー窓を出す。
+//! The Flintkey desktop app. Lives in the menu bar / system tray and shows the launcher window on a hotkey.
 
-// リリースビルドの Windows でコンソール窓を出さない。
+// Do not open a console window on Windows in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod hotkeys;
@@ -29,7 +29,7 @@ use tauri::{
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 const LAUNCHER: &str = "launcher";
-/// `tauri.conf.json` の窓の大きさと同じ (論理サイズ)。
+/// Same as the window size in `tauri.conf.json` (logical size).
 const WINDOW_SIZE: (f64, f64) = (720.0, 480.0);
 
 const EVENT_SHOWN: &str = "launcher-shown";
@@ -38,22 +38,22 @@ const EVENT_HIDDEN: &str = "launcher-hidden";
 struct AppState {
     session: Mutex<Session>,
     hotkeys: Mutex<Registry>,
-    /// 窓を隠したあとに起きた失敗。次に窓を出したときに見せる。
+    /// Failures that happened after the window was hidden. Shown the next time the window appears.
     notices: Mutex<Vec<String>>,
     showing: Mutex<Showing>,
-    /// 窓がキー入力の宛先になっているか。
+    /// Whether the window is the target of keyboard input.
     has_key: AtomicBool,
-    /// 窓をキー入力を受け取れるパネルに変えられたか。
+    /// Whether the window could be turned into a panel that receives keyboard input.
     #[cfg(target_os = "macos")]
     panel: AtomicBool,
 }
 
-/// 登録できているホットキー。
+/// The hotkeys that are registered.
 #[derive(Default)]
 struct Registry {
-    /// ショートカット → 押したときに起きることと、設定に書かれていた文字列。
+    /// Shortcut -> what happens when it is pressed, and the text written in the settings.
     registered: Registered,
-    /// 最後に登録し直したときの問題 (読めない、重なっている、登録できない)。
+    /// Problems from the last re-registration (unreadable, conflicting, could not be registered).
     problems: Vec<String>,
 }
 
@@ -63,13 +63,13 @@ impl Registry {
     }
 }
 
-/// 窓を出すたびにページへ渡す内容。
+/// What is passed to the page each time the window is shown.
 #[derive(Serialize)]
 struct View {
     rows: Vec<Row>,
     problems: Vec<String>,
     config_dir: String,
-    /// 今の表示の番号。ページは実行要求にこれを付ける。
+    /// The number of the current showing. The page attaches it to run requests.
     showing: u64,
 }
 
@@ -77,7 +77,7 @@ struct View {
 fn open_session(state: State<'_, AppState>, query: String) -> View {
     let mut problems = std::mem::take(&mut *state.notices.lock().unwrap());
     problems.extend(state.hotkeys.lock().unwrap().problems.iter().cloned());
-    // コマンドは窓を出したときに読み直してある (`sync_hotkeys`)。
+    // Commands were already reloaded when the window was shown (`sync_hotkeys`).
     let mut session = state.session.lock().unwrap();
     problems.extend(session.problems());
     View {
@@ -93,19 +93,19 @@ fn search(state: State<'_, AppState>, query: String) -> Vec<Row> {
     state.session.lock().unwrap().search(&query)
 }
 
-/// コマンドを実行する。計画を立てられなければ窓を開いたままエラーを返す。
-/// 計画が立てば窓を隠し、起動は別スレッドで行う (1Password の認証待ちで窓を固めないため)。
+/// Runs a command. If no plan can be made, returns the error and keeps the window open.
+/// Otherwise hides the window and launches on another thread (so waiting for 1Password does not freeze the window).
 #[tauri::command]
 fn run(app: AppHandle, state: State<'_, AppState>, id: String, showing: u64) -> Result<(), String> {
-    // Enter の連打や続けてのクリックで要求が複数届く。窓は最初の要求で隠れるので、残りは
-    // 利用者が見ていない一覧に対する要求になる。最初の 1 件だけ受け付ける。
+    // Repeated Enter presses or clicks send several requests. The window hides on the first one, so the
+    // rest are for a list the user no longer sees. Accept only the first.
     if !state.showing.lock().unwrap().claim(showing) {
         return Ok(());
     }
     let plan = match plan_command(&state, &id) {
         Ok(plan) => plan,
         Err(message) => {
-            // 窓は開いたまま。別のコマンドを選び直せるようにする。
+            // Keep the window open so the user can pick another command.
             state.showing.lock().unwrap().release(showing);
             return Err(message);
         }
@@ -126,13 +126,13 @@ fn plan_command(state: &AppState, id: &str) -> Result<Plan, String> {
         .plan(id, shell.as_deref(), path.as_deref())
 }
 
-/// 計画を実行し、使ったことを記録する。失敗は知らせで見せる。1Password の認証を待つことがあるので、
-/// メインスレッドから呼ばない。
+/// Executes the plan and records the use. Failures are shown as notices. May wait for 1Password
+/// authentication, so do not call it from the main thread.
 fn execute_and_record(app: &AppHandle, id: &str, plan: &Plan) {
     let state = app.state::<AppState>();
     match launch::execute(plan, &OnePassword::locate()) {
         Ok(()) => {
-            // コマンドはもう起動している。記録の失敗で利用者を止めない。
+            // The command has already started. Do not bother the user over a failure to record it.
             if let Err(error) = state.session.lock().unwrap().record_use(id) {
                 eprintln!("could not record the use of `{id}`: {error}");
             }
@@ -141,13 +141,13 @@ fn execute_and_record(app: &AppHandle, id: &str, plan: &Plan) {
     }
 }
 
-/// 知らせを積み、キー入力を奪わずに窓で見せる。
+/// Queues a notice and shows it in the window without taking keyboard input.
 fn notify(app: &AppHandle, notice: String) {
     app.state::<AppState>().notices.lock().unwrap().push(notice);
     show_launcher(app, Focus::Leave);
 }
 
-/// ホットキーが押された。メインスレッド以外から呼ぶ (コマンドの実行は 1Password の認証を待つことがある)。
+/// A hotkey was pressed. Call off the main thread (running a command may wait for 1Password authentication).
 fn fire(app: &AppHandle, shortcut: Shortcut) {
     let state = app.state::<AppState>();
     let target = state
@@ -172,8 +172,8 @@ fn hide(app: AppHandle) {
     hide_launcher(&app);
 }
 
-/// コマンドを読み直し、ランチャーとコマンドのホットキーを登録し直す。メインスレッドから呼ぶ
-/// (登録はメインスレッドの応答を待つので、別スレッドからだとロックを持ったまま互いに止まりうる)。
+/// Reloads commands and re-registers the launcher and command hotkeys. Call from the main thread
+/// (registration waits on the main thread, so calling it from another thread while holding a lock can deadlock).
 fn sync_hotkeys(app: &AppHandle) {
     let state = app.state::<AppState>();
     let (launcher, commands) = {
@@ -203,7 +203,7 @@ fn rect(position: PhysicalPosition<i32>, size: tauri::PhysicalSize<u32>) -> Rect
     }
 }
 
-/// 設定に従って、窓を置く位置を決める。モニターの情報が取れなければ `None`。
+/// Decides where to put the window according to the settings. `None` if monitor information is unavailable.
 fn launcher_position(app: &AppHandle) -> Option<Position> {
     let primary = app.primary_monitor().ok().flatten();
     let monitors: Vec<Monitor> = app
@@ -224,21 +224,21 @@ fn launcher_position(app: &AppHandle) -> Option<Position> {
     placement::place(Os::current(), &monitors, cursor, display, WINDOW_SIZE)
 }
 
-/// 窓を出すときに、キー入力の宛先にするかどうか。
+/// Whether showing the window also makes it the target of keyboard input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Focus {
-    /// 利用者が窓を出す操作をした。キー入力を受け取る。
+    /// The user asked for the window. It receives keyboard input.
     Take,
-    /// アプリの都合で知らせを出す。利用者は別のアプリで打鍵しているかもしれないので、キー入力を奪わない
-    /// (奪うと、別のアプリに打ったつもりの Enter でコマンドが実行される)。
+    /// The app shows a notice on its own. The user may be typing in another app, so do not take keyboard input
+    /// (otherwise an Enter meant for the other app would run a command).
     Leave,
 }
 
-/// 窓を出す。どのスレッドからでも呼べる。
+/// Shows the window. Can be called from any thread.
 ///
-/// 設定の反映、ホットキーの登録、窓の操作はメインスレッドに集める。ホットキーの登録は
-/// メインスレッドの応答を待つので、別スレッドがロックを持ったまま登録すると、同じロックを待つ
-/// メインスレッドと互いに止まる。
+/// Applying settings, registering hotkeys and window operations all run on the main thread. Hotkey
+/// registration waits on the main thread, so registering from another thread while holding a lock
+/// deadlocks with the main thread waiting for the same lock.
 fn show_launcher(app: &AppHandle, focus: Focus) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || show_launcher_on_main(&handle, focus));
@@ -250,7 +250,7 @@ fn show_launcher_on_main(app: &AppHandle, focus: Focus) {
     };
     let visible = window.is_visible().unwrap_or(false);
     if focus == Focus::Leave && !visible && !shows_without_key(app) {
-        // 通常の窓は、出すだけでキー入力を奪う。知らせは、次に利用者が窓を出したときに見せる。
+        // A normal window takes keyboard input just by appearing. The notice waits for the next showing.
         return;
     }
     app.state::<AppState>().session.lock().unwrap().reload_settings();
@@ -260,25 +260,25 @@ fn show_launcher_on_main(app: &AppHandle, focus: Focus) {
         }
         Some(Position::Physical { x, y }) => {
             let _ = window.set_position(PhysicalPosition::new(x, y));
-            // 拡大率の違うモニターへ移ると物理サイズが変わるので、論理サイズで指定し直す。
+            // Moving to a monitor with a different scale changes the physical size, so set the logical size again.
             let _ = window.set_size(LogicalSize::new(WINDOW_SIZE.0, WINDOW_SIZE.1));
         }
         None => {}
     }
     present(app, &window, focus);
-    // すでに出ている窓の内容を更新するだけなら、表示は続いている。番号を変えない。
+    // Refreshing an already visible window continues the same showing. Keep its number.
     let state = app.state::<AppState>();
     let id = {
         let mut showing = state.showing.lock().unwrap();
         if visible { showing.id() } else { showing.begin() }
     };
     let _ = window.emit(EVENT_SHOWN, id);
-    // コマンドの読み直しは窓を出したあとに行う (数百件あると、出るまでの時間に響く)。
-    // ページが一覧を求めるのはこの関数を抜けたあとなので、一覧には読み直した結果が出る。
+    // Reload commands after showing the window (with hundreds of them, it delays the window).
+    // The page asks for the list only after this function returns, so the list reflects the reload.
     sync_hotkeys(app);
 }
 
-/// キー入力を奪わずに窓を出せるか。パネルにできた macOS だけ。
+/// Whether the window can be shown without taking keyboard input. Only on macOS, when the panel conversion worked.
 fn shows_without_key(app: &AppHandle) -> bool {
     #[cfg(target_os = "macos")]
     return app.state::<AppState>().panel.load(Ordering::Relaxed);
@@ -289,19 +289,20 @@ fn shows_without_key(app: &AppHandle) -> bool {
     }
 }
 
-/// 窓を出す。`Focus::Take` ならキー入力も受け取れるようにする。メインスレッドから呼ぶ。
+/// Shows the window. With `Focus::Take` it also receives keyboard input. Call from the main thread.
 fn present(app: &AppHandle, window: &WebviewWindow, focus: Focus) {
     #[cfg(target_os = "macos")]
     if app.state::<AppState>().panel.load(Ordering::Relaxed) {
         if let Ok(ns_window) = window.ns_window() {
-            // SAFETY: この窓は起動時にパネルへ変えてあり、アプリが終わるまで閉じない。ここはメインスレッド。
+            // SAFETY: this window became a panel at startup and stays open until the app exits.
+            // This is the main thread.
             unsafe { panel::show(ns_window, focus == Focus::Take) };
         }
         return;
     }
     let _ = app;
-    // 通常の窓は `show()` だけでキー入力を受け取る。`Focus::Leave` でここに来るのは、
-    // すでに出ている窓の内容を更新する場合だけなので、何もしない。
+    // A normal window receives keyboard input from `show()` alone. `Focus::Leave` only gets here when
+    // refreshing an already visible window, so do nothing.
     if focus == Focus::Take {
         let _ = window.show();
         let _ = window.set_focus();
@@ -319,8 +320,8 @@ fn hide_launcher(app: &AppHandle) {
         return;
     }
     let _ = window.hide();
-    // パネルにできなかった場合は Flintkey が前面のアプリになっている。窓を隠すだけでは
-    // 元のアプリにキー入力が戻らない。
+    // Without the panel, Flintkey is the frontmost app. Hiding the window alone does not return
+    // keyboard input to the previous app.
     #[cfg(target_os = "macos")]
     if !app.state::<AppState>().panel.load(Ordering::Relaxed) {
         let _ = app.hide();
@@ -328,7 +329,7 @@ fn hide_launcher(app: &AppHandle) {
     let _ = window.emit(EVENT_HIDDEN, ());
 }
 
-/// 窓が出ていれば隠し、隠れていれば出す。どのスレッドからでも呼べる。
+/// Hides the window if visible, shows it if hidden. Can be called from any thread.
 fn toggle_launcher(app: &AppHandle) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
@@ -343,11 +344,11 @@ fn toggle_launcher(app: &AppHandle) {
     });
 }
 
-/// フォーカスの通知が届いた時点で、窓がキー入力を持っているか。`reported` は通知の値。
+/// Whether the window holds keyboard input when a focus event arrives. `reported` is the event's value.
 ///
-/// macOS では通知が遅れて届く。その間に窓を出し直していると、古い「失った」通知で出したばかりの
-/// 窓を隠してしまうので、今の状態を見る。他の OS では通知の値をそのまま使う (Windows では
-/// 通知の対象は WebView、`is_focused()` の対象は親の窓で、同じものを指していない)。
+/// On macOS the event arrives late. If the window was shown again in the meantime, a stale "lost" event
+/// would hide the freshly shown window, so check the current state. Other OSes use the event's value as is
+/// (on Windows the event is about the WebView and `is_focused()` about the parent window; they differ).
 fn holds_key_now(window: &tauri::Window, reported: bool) -> bool {
     if cfg!(target_os = "macos") {
         window.is_focused().unwrap_or(reported)
@@ -364,7 +365,7 @@ fn open_config_folder(app: &AppHandle) {
         .unwrap()
         .config_dir()
         .to_path_buf();
-    // 初回は `commands` フォルダが無い。置き場所が分かるように作ってから開く。
+    // On first run there is no `commands` folder. Create it before opening so users see where commands go.
     let result = std::fs::create_dir_all(folder.join("commands")).and_then(|()| open::that_detached(&folder));
     if let Err(error) = result {
         let notice = format!("could not open {}: {error}", folder.display());
@@ -388,12 +389,12 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             "quit" => app.exit(0),
             _ => {}
         });
-    // macOS のメニューバーは、明暗に合わせて色が変わるテンプレート画像にする。
+    // Use a template image in the macOS menu bar so its color follows light/dark mode.
     #[cfg(target_os = "macos")]
     let tray = tray
         .icon(tauri::include_image!("icons/tray-template.png"))
         .icon_as_template(true);
-    // タスクトレイは左クリックで窓、右クリックでメニューが慣習。
+    // In system trays, left click conventionally opens the window and right click the menu.
     #[cfg(not(target_os = "macos"))]
     let tray = tray
         .icon(app.default_window_icon().cloned().expect("the bundle has an icon"))
@@ -428,7 +429,7 @@ fn main() {
     };
 
     tauri::Builder::default()
-        // 2 つ目を起動したら、常駐している方の窓を出す。
+        // Launching a second instance shows the window of the running one.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_launcher(app, Focus::Take)
         }))
@@ -436,9 +437,9 @@ fn main() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
                     if event.state() == ShortcutState::Pressed {
-                        // macOS のメディアキーでは、ライブラリが自分のロックを持ったままここを呼ぶ。
-                        // この場でホットキーを登録し直すと同じロックを取りに行って止まるので、
-                        // 別スレッドを経由する (窓の操作はそこからメインスレッドへ回す)。
+                        // For macOS media keys, the library calls this while holding its own lock.
+                        // Re-registering hotkeys here would wait for that same lock and hang, so go through
+                        // another thread (which hands window operations to the main thread).
                         let app = app.clone();
                         let shortcut = *shortcut;
                         std::thread::spawn(move || fire(&app, shortcut));
@@ -449,21 +450,21 @@ fn main() {
         .manage(state)
         .invoke_handler(tauri::generate_handler![open_session, search, run, hide])
         .setup(|app| {
-            // Dock とアプリ切り替えに出さない。
+            // Keep the app out of the Dock and the app switcher.
             #[cfg(target_os = "macos")]
             {
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
                 let window = app
                     .get_webview_window(LAUNCHER)
                     .expect("the launcher window is configured");
-                // SAFETY: setup はメインスレッドで動き、窓は作られたばかりで生きている。
+                // SAFETY: setup runs on the main thread, and the window was just created and is alive.
                 let converted = unsafe { panel::convert(window.ns_window()?) };
                 app.state::<AppState>().panel.store(converted, Ordering::Relaxed);
             }
             build_tray(app.handle())?;
             app.state::<AppState>().session.lock().unwrap().reload_settings();
             sync_hotkeys(app.handle());
-            // ランチャーのホットキーが使えないと窓を出す手段に気づけないので、最初に窓で知らせる。
+            // Without a working launcher hotkey the user has no obvious way to open the window, so tell them up front.
             if !app.state::<AppState>().hotkeys.lock().unwrap().has_launcher() {
                 show_launcher(app.handle(), Focus::Leave);
             }
@@ -475,8 +476,8 @@ fn main() {
                 window.state::<AppState>().has_key.store(has_key, Ordering::SeqCst);
             }
             WindowEvent::Focused(false) => {
-                // キー入力を持っていた窓が、いま持っていないときだけ隠す。知らせで出した窓は
-                // キー入力を持たないので、ここでは隠れない。
+                // Hide only when a window that had keyboard input no longer has it. A window shown for a notice
+                // never had keyboard input, so it does not hide here.
                 let had_key = window.state::<AppState>().has_key.load(Ordering::SeqCst);
                 if had_key && !holds_key_now(window, false) {
                     hide_launcher(window.app_handle());

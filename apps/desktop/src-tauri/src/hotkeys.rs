@@ -1,32 +1,32 @@
-//! 設定に書かれたホットキーから、登録するショートカットの組を決める (純粋な関数)。
+//! Decides which shortcuts to register from the hotkeys in the settings (pure functions).
 
 use std::collections::HashMap;
 use tauri_plugin_global_shortcut::Shortcut;
 
-/// ホットキーを押したときに起きること。
+/// What happens when a hotkey is pressed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
     Launcher,
-    /// コマンドの id。
+    /// The command's id.
     Command(String),
 }
 
-/// 登録済みのショートカット → 押したときに起きることと、設定に書かれていた文字列。
+/// Registered shortcut -> what happens when it is pressed, and the text written in the settings.
 pub type Registered = HashMap<Shortcut, (Target, String)>;
 
 #[derive(Debug, Default, PartialEq)]
 pub struct Wanted {
-    /// 登録したいショートカットと、押したときに起きること。書かれていた文字列も持つ (知らせに使う)。
+    /// Shortcuts to register and what they do. Also keeps the text as written (used in notices).
     pub shortcuts: HashMap<Shortcut, (Target, String)>,
-    /// ランチャーのホットキーが読めたか。読めなければ、今登録しているものを使い続ける。
+    /// Whether the launcher hotkey could be read. If not, the currently registered one stays in use.
     pub launcher_readable: bool,
     pub problems: Vec<String>,
 }
 
-/// `launcher` はランチャーのホットキー、`commands` は (id, ホットキー) を id の順に並べたもの。
+/// `launcher` is the launcher hotkey; `commands` is (id, hotkey) pairs in id order.
 ///
-/// 重なったら、ランチャーが優先、コマンド同士は先に来たもの。大文字小文字や書き方の違い
-/// (`Ctrl+Alt+C` と `ctrl+alt+KeyC`) は同じショートカットとして比べる。
+/// On conflicts the launcher wins, and among commands the first one wins. Differences in case or spelling
+/// (`Ctrl+Alt+C` vs `ctrl+alt+KeyC`) compare as the same shortcut.
 pub fn wanted(launcher: &str, commands: &[(String, String)]) -> Wanted {
     let mut out = Wanted::default();
     match launcher.parse::<Shortcut>() {
@@ -63,12 +63,12 @@ pub fn wanted(launcher: &str, commands: &[(String, String)]) -> Wanted {
     out
 }
 
-/// 登録済みの組を `wanted` に合わせる。`register` は登録できたら `true` を返す。問題の一覧を返す
-/// (`wanted` が見つけたものと、登録できなかったもの)。
+/// Brings the registered set in line with `wanted`. `register` returns `true` on success. Returns the problems
+/// (those found by `wanted` and those that could not be registered).
 ///
-/// 登録できなかったものは `registered` に入れないので、次に呼ばれたときにもう一度試す。
-/// ランチャーのホットキーは、新しいものが読めない・登録できない場合は古いものを残す
-/// (ランチャーを出す手段が無くなると、設定を直すために窓を出せない)。
+/// Failed registrations are not added to `registered`, so they are retried on the next call.
+/// If the new launcher hotkey cannot be read or registered, the old one is kept
+/// (without a way to open the launcher, the user cannot open the window to fix the settings).
 pub fn apply(
     registered: &mut Registered,
     wanted: Wanted,
@@ -77,14 +77,14 @@ pub fn apply(
 ) -> Vec<String> {
     let desired = wanted.shortcuts;
     let mut problems = wanted.problems;
-    // 足すものを先に登録する。ランチャーのホットキーを変えて登録に失敗しても、古い方を残せるように。
+    // Register additions first, so the old launcher hotkey can stay if registering a new one fails.
     let mut launcher_failed = !wanted.launcher_readable;
     let mut additions: Vec<(Shortcut, (Target, String))> = desired
         .iter()
         .filter(|(shortcut, _)| !registered.contains_key(shortcut))
         .map(|(shortcut, entry)| (*shortcut, entry.clone()))
         .collect();
-    // ランチャーを先に試す。順序で結果が変わることは無いが、知らせの並びを決まったものにする。
+    // Try the launcher first. Order does not change the result, but it keeps the notices in a stable order.
     additions.sort_by_key(|(_, (target, text))| (*target != Target::Launcher, text.clone()));
     for (shortcut, (target, text)) in additions {
         if register(shortcut) {
@@ -110,7 +110,7 @@ pub fn apply(
         unregister(shortcut);
         registered.remove(&shortcut);
     }
-    // 登録済みのショートカットの行き先を付け替える (あるコマンドのホットキーを別のコマンドへ移した場合など)。
+    // Retarget registered shortcuts (e.g. when a hotkey moved from one command to another).
     for (shortcut, entry) in desired {
         let Some(current) = registered.get_mut(&shortcut) else {
             continue;
@@ -129,8 +129,8 @@ pub fn apply(
     problems
 }
 
-/// 修飾キーがあるか、ふだんの入力に使わない F キーか。修飾キー無しの `a` を登録できる OS があり、
-/// 登録できると、別のアプリで `a` を打つたびにコマンドが動く。
+/// Whether the shortcut has a modifier or is an F key not used in normal typing. Some OSes allow registering
+/// a bare `a`, and then every `a` typed in another app would run the command.
 fn has_modifier_or_is_a_function_key(shortcut: &Shortcut) -> bool {
     if !shortcut.mods.is_empty() {
         return true;
@@ -140,7 +140,7 @@ fn has_modifier_or_is_a_function_key(shortcut: &Shortcut) -> bool {
         .is_some_and(|number| !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()))
 }
 
-/// ライブラリのエラー文から、ライブラリへの報告の依頼 (利用者には関係ない) を除く。
+/// Strips the library's request to report the issue to it (irrelevant to users) from its error message.
 fn reason(error: &impl std::fmt::Display) -> String {
     let text = error.to_string();
     match text.split_once(", if you feel like it should be") {
@@ -167,7 +167,7 @@ mod tests {
             .map(|(target, _)| target.clone())
     }
 
-    /// `apply` を、登録の成否を決められる偽の登録先で動かす。
+    /// Runs `apply` against a fake registrar whose success or failure the test controls.
     struct Fake {
         registered: Registered,
         refuse: Vec<Shortcut>,
@@ -240,7 +240,7 @@ mod tests {
         let mut fake = Fake::new();
         fake.sync("alt+space", &[("a", "ctrl+alt+cmd+a"), ("b", "ctrl+alt+cmd+b")]);
 
-        // Act: a のホットキーを c に移し、b のホットキーを消す。
+        // Act: move a's hotkey to c and remove b's hotkey.
         let problems = fake.sync("alt+space", &[("c", "ctrl+alt+cmd+a")]);
 
         // Assert
@@ -293,7 +293,7 @@ mod tests {
 
     #[test]
     fn the_old_launcher_is_not_handed_to_a_command_while_it_is_kept() {
-        // Arrange: ランチャーを alt+space から移そうとして失敗し、alt+space をコマンドに渡そうとした。
+        // Arrange: moving the launcher off alt+space failed, and alt+space was given to a command.
         let mut fake = Fake::new();
         fake.sync("alt+space", &[]);
         fake.refuse.push(shortcut("ctrl+alt+space"));
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn every_hotkey_the_alfred_import_writes_can_be_read() {
-        // Arrange: 移行が書き出す修飾キーの名前と、すべてのキーの名前。
+        // Arrange: the modifier names the importer writes, and every key name.
         let keys: Vec<&str> = flintkey_core::alfred::key_names().collect();
         assert!(keys.len() > 60, "{keys:?}");
 

@@ -1,2 +1,2 @@
-# 公開から 7 日 (分で指定) 経っていないバージョンを入れない。
+# Do not install versions published less than 7 days ago (given in minutes).
 minimumReleaseAge: 10080
