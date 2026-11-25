@@ -1,0 +1,14 @@
+menu:
+  - title: Tauri dev
+    shell: pnpm -C apps/desktop tauri dev
+
+  - title: Local deploy (/Applications)
+    shell: pnpm -C apps/desktop local-deploy
+    help: Build, sign, notarize and staple the .app, then install it in /Applications.
+
+  - title: Install the CLI (~/.cargo/bin)
+    shell: cargo install --path crates/flintkey-core --example flintkey --locked
+    help: Build the flintkey CLI (list / plan / run) in release mode and install it in ~/.cargo/bin.
+
+  - title: Clippy (deny warnings)
+    shell: cargo clippy --workspace --all-targets -- -D warnings
