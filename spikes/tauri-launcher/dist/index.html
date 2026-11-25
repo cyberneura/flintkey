@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Flintkey spike (Tauri)</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #1e1f22;
+        color: #e6e6e6;
+        font: 14px -apple-system, "Segoe UI", sans-serif;
+        overflow: hidden;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+      #query {
+        margin: 8px;
+        padding: 8px 10px;
+        border: 1px solid #3a3b3f;
+        border-radius: 6px;
+        background: #2a2b2f;
+        color: inherit;
+        font: inherit;
+        outline: none;
+      }
+      #results {
+        flex: 1;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        overflow-y: auto;
+      }
+      #results li {
+        height: 44px;
+        padding: 0 12px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+      #results li.selected {
+        background: #2f65ca;
+      }
+      #results small {
+        color: #9a9a9a;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <input id="query" placeholder="Search commands…" autofocus />
+    <ul id="results"></ul>
+    <script>
+      const { invoke } = window.__TAURI__.core;
+      const query = document.getElementById("query");
+      const results = document.getElementById("results");
+      let lastFilterUs = 0;
+
+      // 現在の DOM を含むフレームが描かれた時点で解決する。requestAnimationFrame の中から
+      // 投げたタスクは、そのフレームの描画処理の直後に実行される。
+      function afterPaint() {
+        return new Promise((resolve) => {
+          requestAnimationFrame(() => {
+            const channel = new MessageChannel();
+            channel.port1.onmessage = () => resolve();
+            channel.port2.postMessage(null);
+          });
+        });
+      }
+
+      async function refresh() {
+        const found = await invoke("search", { query: query.value });
+        lastFilterUs = found.filter_us;
+        const rows = found.rows.map((item, index) => {
+          const row = document.createElement("li");
+          if (index === 0) row.className = "selected";
+          const title = document.createElement("span");
+          title.textContent = item.title;
+          const subtitle = document.createElement("small");
+          subtitle.textContent = item.subtitle;
+          row.append(title, subtitle);
+          return row;
+        });
+        results.replaceChildren(...rows);
+      }
+
+      query.addEventListener("input", refresh);
+      window.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") invoke("quit");
+      });
+
+      window.__bench = {
+        async show(seq) {
+          query.focus();
+          await afterPaint();
+          await invoke("painted", { seq });
+        },
+        async type(keys) {
+          const totalMs = [];
+          const filterUs = [];
+          for (const key of keys) {
+            const started = performance.now();
+            query.value += key;
+            await refresh();
+            await afterPaint();
+            totalMs.push(performance.now() - started);
+            filterUs.push(lastFilterUs);
+            await new Promise((resolve) => setTimeout(resolve, 30));
+          }
+          await invoke("typed", { totalMs, filterUs, finalQuery: query.value });
+        },
+      };
+
+      refresh().then(() => invoke("ready"));
+    </script>
+  </body>
+</html>

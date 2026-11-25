@@ -1,0 +1,96 @@
+{
+  "engine": "tauri 2.12.6 (system WebView)",
+  "phase": "done",
+  "pid": 53966,
+  "item_count": 1000,
+  "cold_start_ms": 923.607666,
+  "type_total_ms": [
+    18.0,
+    4.0,
+    15.0,
+    5.0,
+    22.0,
+    15.0,
+    18.0,
+    4.0,
+    19.0,
+    2.0,
+    18.0
+  ],
+  "type_filter_us": [
+    374.959,
+    127.166,
+    95.25,
+    137.125,
+    261.541,
+    91.416,
+    83.583,
+    78.583,
+    66.167,
+    61.45799999999999,
+    51.125
+  ],
+  "typed_query": "deployblogs",
+  "show_ms": [
+    39.695333999999995,
+    44.267541,
+    33.546625,
+    57.40675,
+    44.204083999999995,
+    41.119541000000005,
+    41.5285,
+    26.853542,
+    42.426666000000004,
+    40.657042,
+    40.972500000000004,
+    30.434083,
+    37.548125,
+    43.426083,
+    38.248875,
+    31.469875000000002,
+    35.576499999999996,
+    34.9255,
+    43.949333,
+    41.606792
+  ],
+  "show_visible_ms": [],
+  "reopen_ms": [],
+  "self_footprint_kb": 23905,
+  "notes": [
+    "app launched at 340 ms",
+    "page loaded and first search done at 613 ms",
+    "self_footprint_kb excludes the WebView helper processes; see the runner's process table"
+  ],
+  "processes_while_idle": [
+    {
+      "pid": 53966,
+      "command": "spike-tauri-launcher",
+      "rss_kb": 96176,
+      "footprint_kb": 23859
+    },
+    {
+      "pid": 53983,
+      "command": "com.apple.WebKit.GPU",
+      "rss_kb": 24448,
+      "footprint_kb": 14131
+    },
+    {
+      "pid": 53984,
+      "command": "com.apple.WebKit.WebContent",
+      "rss_kb": 38640,
+      "footprint_kb": 29696
+    },
+    {
+      "pid": 53985,
+      "command": "com.apple.WebKit.Networking",
+      "rss_kb": 10336,
+      "footprint_kb": null
+    }
+  ],
+  "exit_code": 0,
+  "host": {
+    "system": "Darwin",
+    "release": "27.0.0",
+    "machine": "arm64"
+  }
+}
