@@ -1,16 +1,18 @@
-//! ランチャー窓を置く位置の計算。
+//! Computes where to put the launcher window.
 //!
-//! 窓の API が返す「物理座標」は OS によって意味が違うので、OS を引数で受け取る純粋な関数にしてある。
+//! The "physical coordinates" returned by the window API mean different things per OS, so this is a pure
+//! function that takes the OS as an argument.
 //!
-//! - macOS: 画面全体で一貫しているのはポイント (論理座標)。モニターの位置と大きさは
-//!   「ポイント × そのモニターの拡大率」、カーソルの位置は「ポイント × メインモニターの拡大率」で返る。
-//!   拡大率の違うモニターが並ぶと物理座標は一貫しないので、ポイントに戻して計算し、論理座標で置く。
-//! - Windows / Linux: 画面全体で一貫しているのは物理座標。そのまま計算し、物理座標で置く。
+//! - macOS: points (logical coordinates) are consistent across the whole desktop. Monitor position and size
+//!   come back as "points x that monitor's scale", the cursor as "points x the main monitor's scale".
+//!   With monitors of different scales the physical coordinates are inconsistent, so convert back to points,
+//!   compute, and place in logical coordinates.
+//! - Windows / Linux: physical coordinates are consistent across the desktop. Compute and place in them.
 
 use flintkey_core::Os;
 use flintkey_core::settings::Display;
 
-/// 上下の余白 (作業領域の高さ − 窓の高さ) のうち、上に取る割合。
+/// Share of the vertical slack (work area height - window height) that goes above the window.
 const TOP_RATIO: f64 = 0.22;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -31,7 +33,7 @@ impl Rect {
         }
     }
 
-    /// 点から矩形までの距離の 2 乗。中にあれば 0。
+    /// Squared distance from a point to the rectangle. 0 if inside.
     fn distance_squared(self, (x, y): (f64, f64)) -> f64 {
         let dx = (self.x - x).max(x - (self.x + self.width)).max(0.0);
         let dy = (self.y - y).max(y - (self.y + self.height)).max(0.0);
@@ -39,27 +41,27 @@ impl Rect {
     }
 }
 
-/// 窓の API が返したままのモニターの情報。
+/// Monitor information as returned by the window API.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Monitor {
     pub bounds: Rect,
-    /// メニューバーやタスクバーを除いた領域。
+    /// The area excluding the menu bar and taskbar.
     pub work_area: Rect,
     pub scale_factor: f64,
     pub primary: bool,
 }
 
-/// 窓を置く位置。OS の API に渡す単位ごとに分けてある。
+/// Where to put the window, split by the unit the OS API expects.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Position {
     Logical { x: f64, y: f64 },
     Physical { x: f64, y: f64 },
 }
 
-/// `window` (論理サイズ) の窓の左上を置く位置。モニターが 1 つも無ければ `None`。
+/// Position of the top-left corner of a window of size `window` (logical). `None` if there are no monitors.
 ///
-/// `cursor` は窓の API が返したままのカーソル位置。取れなかった場合や、どのモニターにも
-/// 入っていない場合は、いちばん近いモニター (取れなかった場合はメインモニター) を使う。
+/// `cursor` is the cursor position as returned by the window API. If it is outside every monitor, the nearest
+/// monitor is used; if it is unavailable, the main monitor.
 pub fn place(
     os: Os,
     monitors: &[Monitor],
@@ -69,7 +71,7 @@ pub fn place(
 ) -> Option<Position> {
     let primary = monitors.iter().find(|monitor| monitor.primary).or(monitors.first())?;
     let points = os == Os::Macos;
-    // 画面全体で一貫した座標系での、各モニターの領域。
+    // Each monitor's area in a coordinate system consistent across the desktop.
     let global = |monitor: &Monitor, rect: Rect| {
         if points {
             rect.scaled(1.0 / monitor.scale_factor)
@@ -100,7 +102,7 @@ pub fn place(
     let area = global(target, target.work_area);
     let units_per_logical = if points { 1.0 } else { target.scale_factor };
     let (width, height) = (window.0 * units_per_logical, window.1 * units_per_logical);
-    // 作業領域より大きい窓は、左上を揃えて切れる側を右下にする。
+    // A window larger than the work area is aligned to the top left so it is cut off at the bottom right.
     let x = area.x + ((area.width - width) / 2.0).max(0.0);
     let y = area.y + ((area.height - height) * TOP_RATIO).max(0.0);
 
@@ -124,7 +126,7 @@ mod tests {
         Rect { x, y, width, height }
     }
 
-    /// ポイントで書いたモニターを、macOS の窓 API が返す形 (ポイント × 拡大率) にする。
+    /// Turns a monitor described in points into what the macOS window API returns (points x scale).
     fn mac_monitor(bounds: Rect, menu_bar: f64, scale_factor: f64, primary: bool) -> Monitor {
         let work_area = rect(bounds.x, bounds.y + menu_bar, bounds.width, bounds.height - menu_bar);
         Monitor {
@@ -135,13 +137,13 @@ mod tests {
         }
     }
 
-    /// 内蔵 (2 倍、メイン) の右に外付け (1 倍) を置いた構成。カーソルはポイントで受け取る。
+    /// A built-in display (2x, main) with an external one (1x) on its right. The cursor is given in points.
     fn mac_retina_and_external(cursor_points: (f64, f64), display: Display) -> Option<Position> {
         let monitors = [
             mac_monitor(rect(0.0, 0.0, 1512.0, 982.0), 32.0, 2.0, true),
             mac_monitor(rect(1512.0, 0.0, 1920.0, 1080.0), 24.0, 1.0, false),
         ];
-        // カーソルはメインモニターの拡大率で物理座標にされて返る。
+        // The cursor comes back in physical coordinates using the main monitor's scale.
         let cursor = (cursor_points.0 * 2.0, cursor_points.1 * 2.0);
         place(Os::Macos, &monitors, Some(cursor), display, WINDOW)
     }
@@ -170,8 +172,9 @@ mod tests {
 
     #[test]
     fn macos_cursor_is_not_misjudged_by_the_scale_difference() {
-        // Arrange: 内蔵の上の (1000pt, 500pt)。返ってくる値は (2000, 1000) で、物理座標のまま比べると
-        // 外付け (1512 から始まる) にも入ってしまう。外付けを先に並べ、先勝ちでは当たらないようにする。
+        // Arrange: (1000pt, 500pt) on the built-in display. The API returns (2000, 1000), which compared as
+        // physical coordinates also falls inside the external one (starting at 1512). List the external one
+        // first so a first-match approach would get it wrong.
         let monitors = [
             mac_monitor(rect(1512.0, 0.0, 1920.0, 1080.0), 24.0, 1.0, false),
             mac_monitor(rect(0.0, 0.0, 1512.0, 982.0), 32.0, 2.0, true),
@@ -189,7 +192,7 @@ mod tests {
 
     #[test]
     fn macos_external_primary_with_builtin_on_the_left() {
-        // Arrange: 外付け (1 倍) がメイン。内蔵 (2 倍) がその左で、座標は負になる。
+        // Arrange: the external display (1x) is main. The built-in one (2x) is on its left, with negative coordinates.
         let monitors = [
             mac_monitor(rect(0.0, 0.0, 1920.0, 1080.0), 24.0, 1.0, true),
             mac_monitor(rect(-1512.0, 98.0, 1512.0, 982.0), 32.0, 2.0, false),
@@ -237,7 +240,7 @@ mod tests {
 
     #[test]
     fn cursor_outside_every_monitor_uses_the_nearest_one() {
-        // Arrange: 外付けの下端より下。どのモニターにも入らない。
+        // Arrange: below the bottom edge of the external display, inside no monitor.
         let position = mac_retina_and_external((2500.0, 1200.0), Display::Cursor);
 
         // Assert
@@ -249,7 +252,7 @@ mod tests {
 
     #[test]
     fn windows_scales_the_window_by_the_target_monitor() {
-        // Arrange: 1 倍のメインの右に 2 倍の 4K。Windows は物理座標が画面全体で一貫している。
+        // Arrange: a 2x 4K display right of a 1x main one. On Windows physical coordinates are consistent.
         let monitors = [
             Monitor {
                 bounds: rect(0.0, 0.0, 1920.0, 1080.0),

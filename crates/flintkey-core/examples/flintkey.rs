@@ -1,17 +1,17 @@
-//! コアを使うコマンドライン。デスクトップアプリ無しで設定フォルダを試すためのもの。
+//! Command line on top of the core, for trying a config folder without the desktop app.
 //!
 //! ```text
-//! cargo run --example flintkey -- list [query]   順位付けしたコマンドと、壊れているファイル
-//! cargo run --example flintkey -- plan <id>      実行すると何が起きるか
-//! cargo run --example flintkey -- run <id>       実行する
+//! cargo run --example flintkey -- list [query]   ranked commands and broken files
+//! cargo run --example flintkey -- plan <id>      what running it would do
+//! cargo run --example flintkey -- run <id>       run it
 //! cargo run --example flintkey -- import-alfred [--write] [--from <Alfred.alfredpreferences>]
-//!                                                 Alfred のワークフローからコマンドを作る (macOS)
+//!                                                 create commands from Alfred workflows (macOS)
 //! ```
 //!
-//! `import-alfred` は既定では何も書かず、作るファイルと変換できなかったものを一覧にする。
-//! `--write` を付けると書く。同じ id のファイルがすでにあれば、中身が違っても上書きしない。
+//! By default `import-alfred` writes nothing; it lists the files it would create and what it could not convert.
+//! `--write` writes them. An existing file with the same id is never overwritten, even if it differs.
 //!
-//! `~/.config/flintkey` 以外のフォルダを使うには `FLINTKEY_CONFIG_DIR` を設定する。
+//! Set `FLINTKEY_CONFIG_DIR` to use a folder other than `~/.config/flintkey`.
 
 use flintkey_core::Os;
 use flintkey_core::alfred::{self, Workflow};
@@ -94,7 +94,7 @@ fn run(args: &[&str]) -> Result<(), String> {
                 launch::execute(&plan, &OnePassword::locate()).map_err(|error| error.to_string())?;
                 let mut usage = Usage::load(&usage_path);
                 usage.record(id);
-                // コマンドはもう起動している。ここで失敗を返すと、やり直しで二重に実行される。
+                // The command has already started. Returning an error here would make a retry run it twice.
                 if let Err(error) = usage.save(&usage_path) {
                     eprintln!("warning: could not record the use: {error}");
                 }
@@ -109,11 +109,11 @@ fn run(args: &[&str]) -> Result<(), String> {
 const USAGE: &str =
     "usage: flintkey list [query] | plan <id> | run <id> | import-alfred [--write] [--from <Alfred.alfredpreferences>]";
 
-/// Alfred が使っている設定フォルダ。同期フォルダを設定していれば、そちらを指している。
+/// The preferences folder Alfred uses. Points to the sync folder if one is set.
 fn alfred_preferences(home: &Path) -> Result<PathBuf, String> {
     let prefs = home.join("Library/Application Support/Alfred/prefs.json");
     let standard = home.join("Library/Application Support/Alfred/Alfred.alfredpreferences");
-    // 同期を解除すると prefs.json は消え、標準のフォルダに戻る。
+    // Turning off sync removes prefs.json and Alfred goes back to the default folder.
     let text = match std::fs::read_to_string(&prefs) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(standard),
@@ -127,7 +127,7 @@ fn alfred_preferences(home: &Path) -> Result<PathBuf, String> {
     }
 }
 
-/// plist は XML と バイナリの 2 つの形があるので、macOS 付属の `plutil` で JSON にして読む。
+/// A plist can be XML or binary, so convert it to JSON with the bundled `plutil` and read that.
 fn read_plist(path: &Path) -> Result<serde_json::Value, String> {
     let output = std::process::Command::new("/usr/bin/plutil")
         .args(["-convert", "json", "-o", "-"])
@@ -190,7 +190,7 @@ fn import_alfred(store: &Store, home: &Path, options: &[&str]) -> Result<(), Str
                 "exists"
             }
         };
-        // 1 件の失敗で残りを止めない。
+        // One failure does not stop the rest.
         if status == "new"
             && write
             && let Err(error) = store.save_command(&imported.id, &imported.command)

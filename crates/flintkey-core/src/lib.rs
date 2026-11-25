@@ -1,7 +1,7 @@
-//! Flintkey ランチャーの、描画エンジンに依存しないコア。
+//! The core of the Flintkey launcher, independent of any rendering engine.
 //!
-//! ここにあるものはウインドウ無しで動く: 設定フォルダの読み書き、コマンドが何を起動するかの
-//! 決定、秘密情報の解決、検索結果の順位付け。デスクトップアプリはこの上の薄い層になる。
+//! Everything here runs without a window: reading and writing the config folder, deciding what a
+//! command launches, resolving secrets, and ranking search results. The desktop app is a thin layer on top.
 
 pub mod alfred;
 pub mod command;

@@ -1,8 +1,8 @@
-//! [`Command`] を YAML のテキストに戻す。
+//! Turns a [`Command`] back into YAML text.
 //!
-//! 新規ファイルは決まった書式で出力する。既存ファイルはその場で編集し、意味が変わった
-//! キーだけを書き換える。手書きのコメント・空行・クォートが残り、設定を 1 つ変えたときの
-//! Git の差分が 1 行で済む。
+//! New files are written in a fixed format. Existing files are edited in place, rewriting only
+//! keys whose meaning changed. Hand-written comments, blank lines and quoting survive, and
+//! changing one setting gives a one-line Git diff.
 
 use crate::command::{Action, Command, TYPE_KEYS, parse_command};
 use serde::Serialize;
@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::str::FromStr;
 use yaml_edit::{Document, Mapping, ScalarValue, YamlValue};
 
-/// キー 1 つの値。コマンドファイルに現れる形だけを持つ。
+/// The value of one key. Only the shapes that appear in command files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Node {
     Text(String),
@@ -21,10 +21,10 @@ enum Node {
     Table(Fields),
 }
 
-/// 新規ファイルに書き出す順に並べたキー。
+/// Keys in the order they are written to a new file.
 type Fields = Vec<(&'static str, Node)>;
 
-/// コマンドに必要なキー。既定値のものは含めない。
+/// The keys a command needs. Keys at their default value are left out.
 fn fields(command: &Command) -> Fields {
     let mut out: Fields = vec![("title", Node::Text(command.title.clone()))];
     if let Some(keywords) = one_or_many(&command.keywords) {
@@ -71,7 +71,7 @@ fn fields(command: &Command) -> Fields {
     out
 }
 
-/// キーワードは 1 つなら文字列で書く。ほとんどのコマンドは 1 つで、手書きの形もそうなるため。
+/// A single keyword is written as a plain string: most commands have one, and that is how people write it.
 fn one_or_many(items: &[String]) -> Option<Node> {
     match items {
         [] => None,
@@ -104,25 +104,25 @@ impl Serialize for Node {
     }
 }
 
-/// 新規コマンドファイルのテキスト。
+/// The text of a new command file.
 pub(crate) fn render(command: &Command) -> String {
     let mut options = serde_saphyr::SerializerOptions::default();
-    // リストはキーの下に字下げする。その場編集のライブラリが書く形に揃えるため。
+    // Lists are indented under their key, to match what the in-place editing library writes.
     options.compact_list_indent = false;
     serde_saphyr::to_string_with_options(&Ordered(&fields(command)), options).expect("a command always serializes")
 }
 
-/// 変更したコマンドを既存ファイルに反映した結果。
+/// The result of applying a changed command to an existing file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Updated {
     pub text: String,
-    /// 決まった書式でファイル全体を書き直した場合は false (コメントは失われる)。
-    /// 元のテキストが有効なコマンドでなかった場合と、その場編集の結果が
-    /// 要求したコマンドにならなかった場合に起きる。
+    /// False if the whole file was rewritten in the fixed format (comments are lost).
+    /// Happens when the original text was not a valid command, or when the in-place edit
+    /// did not produce the requested command.
     pub kept_formatting: bool,
 }
 
-/// 既存ファイルのテキストに `command` を反映する。
+/// Applies `command` to the text of an existing file.
 pub(crate) fn update(source: &str, command: &Command) -> Updated {
     let Ok(current) = parse_command(source) else {
         return Updated {
@@ -130,16 +130,16 @@ pub(crate) fn update(source: &str, command: &Command) -> Updated {
             kept_formatting: false,
         };
     };
-    // その場編集のライブラリを通す前に判定する。変更していないフォームを保存したときに、
-    // ライブラリの挙動に関係なくファイルが変わらないことを保証するため。
+    // Decide before going through the in-place editing library, so saving an unchanged form
+    // is guaranteed to leave the file untouched whatever the library does.
     if current == *command {
         return Updated {
             text: source.to_string(),
             kept_formatting: true,
         };
     }
-    // その場編集のライブラリは歴史が浅い。出力を読み直して、要求したコマンドと
-    // 完全に同じ意味になっていることを確かめてから採用する。
+    // The in-place editing library is young. Re-parse its output and accept it only if it means
+    // exactly the requested command.
     match edit_in_place(source, &fields(&current), &fields(command)) {
         Some(text) if parse_command(&text).as_ref() == Ok(command) => Updated {
             text,
@@ -155,11 +155,11 @@ pub(crate) fn update(source: &str, command: &Command) -> Updated {
 fn edit_in_place(source: &str, old: &Fields, new: &Fields) -> Option<String> {
     let document = Document::from_str(source).ok()?;
     let root = document.as_mapping()?;
-    // `old` は既定値のキーを含まないので、`env: {}` のように既定値で書かれたキーは
-    // `apply` の削除対象にならない。type を変えた後に残ると無効なファイルになるので、
-    // 新しい type が受け付けないキーはここで除く。
-    // type が変わらないなら触らない。値の無いキー (`cwd:`) は別の type のものでも有効で、
-    // 無関係な編集で消してはいけない。
+    // `old` has no default-valued keys, so a key written with its default such as `env: {}`
+    // is never removed by `apply`. Left behind after a type change it makes the file invalid,
+    // so keys the new type does not accept are removed here.
+    // Leave them alone if the type is unchanged. An empty key (`cwd:`) is valid even for another type,
+    // and an unrelated edit must not remove it.
     let Some(Node::Text(new_type)) = lookup(new, "type") else {
         return None;
     };
@@ -178,10 +178,10 @@ fn lookup<'a>(fields: &'a Fields, key: &str) -> Option<&'a Node> {
     fields.iter().find(|(name, _)| *name == key).map(|(_, node)| node)
 }
 
-/// 現在 `old` を意味している `mapping` を、`new` を意味するように書き換える。
+/// Rewrites `mapping`, which currently means `old`, so that it means `new`.
 ///
-/// キーはテキストではなく意味で比べる。値が変わっていないキーには書き込まない。
-/// 書き込むと、クォートの書き方が正規化されてしまうため。
+/// Keys are compared by meaning, not text. Keys whose value did not change are not written,
+/// because writing them would normalize their quoting.
 fn apply(mapping: &Mapping, old: &Fields, new: &Fields) -> Option<()> {
     for (key, _) in old {
         if lookup(new, key).is_none() {
@@ -193,14 +193,14 @@ fn apply(mapping: &Mapping, old: &Fields, new: &Fields) -> Option<()> {
         if have == Some(want) {
             continue;
         }
-        // 既定値のキーがファイルに書かれていることがある (`pin: false`)。
-        // その場合は今ある位置で値を変える。
+        // A default-valued key may be written in the file (`pin: false`).
+        // In that case change the value where it is.
         if have.is_some() || mapping.contains_key(*key) {
             change(mapping, key, have, want)?;
             continue;
         }
-        // 新しいキーは末尾ではなく、決まった順序で直前に来るキーの後ろに入れる。
-        // 2 台のマシンが別々のキーを足したときに、変更行が重ならないようにするため。
+        // A new key goes after the key that precedes it in the fixed order, not at the end,
+        // so two machines adding different keys do not change the same lines.
         let predecessor = new[..index]
             .iter()
             .rev()
@@ -217,8 +217,8 @@ fn apply(mapping: &Mapping, old: &Fields, new: &Fields) -> Option<()> {
 fn change(mapping: &Mapping, key: &str, have: Option<&Node>, want: &Node) -> Option<()> {
     match (have, want) {
         (Some(Node::List(have)), Node::List(want)) => {
-            // 添字での編集は、ファイル上の並びが `have` と同じときだけ正しい。`os` は
-            // ソートして読み込むので、手書きの並びとは食い違うことがある。
+            // Editing by index is only correct when the file order matches `have`. `os` is
+            // sorted on load, so it can differ from the hand-written order.
             let sequence = mapping.get_sequence(key).filter(|sequence| {
                 let on_file: Option<Vec<String>> = sequence
                     .values()
@@ -262,8 +262,8 @@ fn change(mapping: &Mapping, key: &str, have: Option<&Node>, want: &Node) -> Opt
         }
         _ => {}
     }
-    // スカラーと、上の分岐で扱えない形で書かれたコレクション
-    // (リストではなく `os: macos`) は、値ごと置き換える。
+    // Scalars, and collections written in a shape the branches above cannot handle
+    // (`os: macos` instead of a list), are replaced wholesale.
     mapping.set(key, to_yaml(want));
     Some(())
 }
@@ -304,14 +304,14 @@ keyword: deploy
 
 type: script
 run: fab deploy
-cwd: ~/workspace/ytyng-blog
+cwd: ~/workspace/blog
 env:
   # token for gh
   GITHUB_TOKEN: op://Private/GitHub/token
   FOO: \"bar\"   # quoted on purpose
 ";
 
-    /// 不注意な書き出しをすると、別の型になったり YAML として壊れたりする文字列。
+    /// Strings that careless output would turn into another type or into broken YAML.
     const TRICKY: [&str; 20] = [
         "no",
         "on",
@@ -345,7 +345,7 @@ env:
             os: [].into(),
             action: Action::Script {
                 run: run.into(),
-                cwd: Some("~/workspace/ytyng-blog".into()),
+                cwd: Some("~/workspace/blog".into()),
                 env: BTreeMap::from([
                     ("GITHUB_TOKEN".to_string(), "op://Private/GitHub/token".to_string()),
                     ("FOO".to_string(), "bar".to_string()),
@@ -354,7 +354,7 @@ env:
         }
     }
 
-    /// `before` の行のうち、`after` に残っていないもの。
+    /// Lines of `before` that are not in `after`.
     fn changed_lines(before: &str, after: &str) -> Vec<String> {
         before
             .lines()
@@ -411,7 +411,7 @@ when:
             keywords: vec!["今日".into(), "today".into()],
             hotkey: Some("ctrl+alt+cmd+t".into()),
             pin: false,
-            tags: vec!["ytyng/コマンド".into()],
+            tags: vec!["個人/コマンド".into()],
             os: [Os::Macos].into(),
             action: Action::App {
                 app: "/Applications/Clock.app".into(),
@@ -434,7 +434,7 @@ hotkey: ctrl+alt+cmd+t
 type: app
 app: /Applications/Clock.app
 tags:
-  - ytyng/コマンド
+  - 個人/コマンド
 when:
   os:
     - macos
@@ -478,7 +478,7 @@ when:
         // Act
         let updated = update(source, &command);
 
-        // Assert: 末尾に足したリストは、その場編集のライブラリが字下げせずに書く (YAML としては同じ意味)。
+        // Assert: the in-place editing library writes an appended list without indentation (same meaning in YAML).
         assert!(updated.kept_formatting, "{}", updated.text);
         assert_eq!(
             updated.text,
@@ -559,7 +559,7 @@ when:
 
     #[test]
     fn unchanged_command_leaves_the_file_byte_identical() {
-        // Arrange: ユーザーが何も変えていないコマンドを、フォームから保存する。
+        // Arrange: save, from the form, a command the user did not change.
         let command = parse_command(HAND_WRITTEN).unwrap();
 
         // Act
@@ -661,10 +661,7 @@ when:
 
         // Assert
         assert!(updated.kept_formatting);
-        assert_eq!(
-            changed_lines(HAND_WRITTEN, &updated.text),
-            ["cwd: ~/workspace/ytyng-blog"]
-        );
+        assert_eq!(changed_lines(HAND_WRITTEN, &updated.text), ["cwd: ~/workspace/blog"]);
         assert_eq!(parse_command(&updated.text), Ok(command));
     }
 
@@ -695,7 +692,7 @@ when:
 
     #[test]
     fn key_written_at_its_default_is_changed_where_it_stands() {
-        // Arrange: `pin: false` は `pin` が無いのと同じ意味。
+        // Arrange: `pin: false` means the same as no `pin`.
         let source = "title: A\npin: false   # maybe later\ntype: url\nurl: https://example.com\n";
         let mut command = parse_command(source).unwrap();
         command.pin = true;
@@ -751,7 +748,7 @@ when:
 
     #[test]
     fn os_list_written_out_of_order_does_not_cost_the_rest_of_the_file_its_comments() {
-        // Arrange: 読み込んだ `os` はソート済みだが、ファイル上の並びは手書きのまま。
+        // Arrange: the loaded `os` is sorted, but the file keeps the hand-written order.
         let source = "\
 # why this exists
 title: A   # shown
@@ -788,7 +785,7 @@ when:
 
     #[test]
     fn changing_the_type_removes_keys_of_the_old_type_that_were_written_at_their_default() {
-        // Arrange: `env: {}` と `args: []` は既定値なので、読み込んだコマンドには現れない。
+        // Arrange: `env: {}` and `args: []` are defaults, so they do not appear in the loaded command.
         let cases = [
             "# keep me\ntitle: A   # shown\ntype: script\nrun: x\nenv: {}\n",
             "# keep me\ntitle: A   # shown\ntype: app\napp: Code\nargs: []\n",
@@ -830,7 +827,7 @@ when:
 
     #[test]
     fn empty_key_of_another_type_is_left_alone_while_the_type_stays() {
-        // Arrange: 値の無いキーは読み込み時に「無い」扱いなので、このファイルは有効。
+        // Arrange: an empty key counts as absent when loaded, so this file is valid.
         let source = "title: A\ntype: url\nurl: https://example.com\ncwd:   # for later\n";
         let mut command = parse_command(source).unwrap();
         command.title = "B".into();
@@ -916,7 +913,7 @@ when:
 
     #[test]
     fn invalid_file_is_rewritten_and_says_so() {
-        // Arrange: 元のテキストはコマンドとして無効なので、キー単位の編集ができない。
+        // Arrange: the original text is not a valid command, so per-key editing is impossible.
         let source = "# notes\ntitle: A\ntype: nope\n";
         let command = Command {
             title: "A".into(),

@@ -1,52 +1,52 @@
-//! Alfred のワークフローを Flintkey のコマンドに変換する。
+//! Converts Alfred workflows into Flintkey commands.
 //!
-//! Alfred のワークフローは、起点 (キーワード、ホットキー) からアクション (URL を開く、スクリプト、…) へ
-//! 線でつないだグラフ。Flintkey のコマンドは「起点 1 つ (キーワードとホットキー) → アクション 1 つ」なので、
-//! その形に収まるものだけを変換し、収まらないものは理由を付けて返す。
+//! An Alfred workflow is a graph of lines from triggers (keywords, hotkeys) to actions (open URL, script, ...).
+//! A Flintkey command is "one trigger (keyword and hotkey) -> one action", so only what fits that shape
+//! is converted; the rest is returned with a reason.
 //!
-//! 入力は `info.plist` を JSON にしたもの (`plutil -convert json`)。ファイルは読まない。
+//! The input is `info.plist` converted to JSON (`plutil -convert json`). No files are read here.
 
 use crate::command::{Action, Command, Os};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-/// ワークフロー 1 つ。
+/// One workflow.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Workflow {
     pub name: String,
     pub disabled: bool,
     objects: Vec<Object>,
-    /// 起点の uid → 修飾キー無しでつながる先の uid。
+    /// Trigger uid -> uids it connects to without a modifier key.
     connections: HashMap<String, Vec<String>>,
-    /// 修飾キーを押しながら実行したときだけつながる先がある uid。
+    /// Uids that have connections used only when run with a modifier key held.
     alternatives: HashSet<String>,
-    /// ワークフローの変数 (設定画面で定義するものを含む) を持つか。スクリプトに渡らなくなる。
+    /// Whether the workflow has variables (including ones defined in its configuration). They would no longer reach scripts.
     has_variables: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 struct Object {
     uid: String,
-    /// `alfred.workflow.` を除いた種類 (`input.keyword`、`action.openurl` など)。
+    /// The type without `alfred.workflow.` (`input.keyword`, `action.openurl`, ...).
     kind: String,
     config: Value,
 }
 
-/// 変換できたコマンド。
+/// A converted command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Imported {
     pub id: String,
     pub command: Command,
-    /// どこから来たか (`<ワークフロー名>: <キーワードかホットキー>`)。
+    /// Where it came from (`<workflow name>: <keyword or hotkey>`).
     pub origin: String,
-    /// 変換はしたが、確かめてほしいこと。
+    /// Converted, but worth checking.
     pub warnings: Vec<String>,
 }
 
-/// 変換しなかった起点。
+/// A trigger that was not converted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Skipped {
-    /// どこのものか (`<ワークフロー名>: <キーワードかホットキー>`)。
+    /// Where it is (`<workflow name>: <keyword or hotkey>`).
     pub origin: String,
     pub reason: String,
 }
@@ -58,7 +58,7 @@ pub struct Conversion {
 }
 
 impl Workflow {
-    /// `info.plist` を JSON にしたものを読む。
+    /// Reads `info.plist` converted to JSON.
     pub fn from_json(info: &Value) -> Result<Workflow, String> {
         let name = text(info, "name").ok_or("the workflow has no name")?.to_string();
         let objects = info
@@ -127,13 +127,13 @@ fn config_text<'a>(object: &'a Object, key: &str) -> &'a str {
     text(&object.config, key).unwrap_or_default()
 }
 
-/// 起点の種類。
+/// The kind of trigger.
 enum Trigger {
     Keyword { keywords: Vec<String>, title: String },
     Hotkey(String),
 }
 
-/// 変換の途中の 1 件。id はまだ決まっていない。
+/// One item mid-conversion. Its id is not decided yet.
 struct Draft {
     workflow: usize,
     target: String,
@@ -146,7 +146,7 @@ struct Draft {
     warnings: Vec<String>,
 }
 
-/// ワークフローをコマンドに変換する。結果はワークフロー名の順で、何度変換しても同じ id になる。
+/// Converts workflows into commands. Results are ordered by workflow name, and ids are the same on every run.
 pub fn convert(workflows: &[Workflow]) -> Conversion {
     let mut order: Vec<usize> = (0..workflows.len()).collect();
     order.sort_by(|&a, &b| workflows[a].name.cmp(&workflows[b].name));
@@ -271,8 +271,8 @@ pub fn convert(workflows: &[Workflow]) -> Conversion {
     conversion
 }
 
-/// 同じアクションにキーワード 1 つとホットキー 1 つがつながっていれば、1 つのコマンドにする。
-/// それ以外の組み合わせは別々のコマンドのまま (どのキーワードにホットキーを付けるか決められない)。
+/// One keyword and one hotkey connected to the same action become one command.
+/// Other combinations stay separate commands (there is no way to pick which keyword gets the hotkey).
 fn merge_hotkeys_into_keywords(drafts: Vec<Draft>) -> Vec<Draft> {
     let mut by_target: BTreeMap<(usize, String), (Vec<usize>, Vec<usize>)> = BTreeMap::new();
     for (index, draft) in drafts.iter().enumerate() {
@@ -311,7 +311,7 @@ fn merge_hotkeys_into_keywords(drafts: Vec<Draft>) -> Vec<Draft> {
         .collect()
 }
 
-/// 起点を読む。起点でなければ `Ok(None)`。変換できない起点は `Err((表示名, 理由))`。
+/// Reads a trigger. `Ok(None)` if it is not a trigger. A trigger that cannot be converted is `Err((label, reason))`.
 fn read_trigger(object: &Object) -> Result<Option<(Trigger, String)>, (String, String)> {
     match object.kind.as_str() {
         "input.keyword" => {
@@ -349,7 +349,7 @@ const CONTROL: u64 = 0x4_0000;
 const OPTION: u64 = 0x8_0000;
 const COMMAND: u64 = 0x10_0000;
 
-/// Alfred のホットキー (macOS の修飾フラグと仮想キーコード) を Flintkey の書式にする。
+/// Converts an Alfred hotkey (macOS modifier flags and virtual key code) to Flintkey's format.
 fn read_hotkey(config: &Value) -> Result<String, String> {
     let modifiers = config.get("hotmod").and_then(Value::as_u64).unwrap_or(0);
     let code = config.get("hotkey").and_then(Value::as_i64).unwrap_or(-1);
@@ -382,12 +382,12 @@ fn read_hotkey(config: &Value) -> Result<String, String> {
     Ok(parts.join("+"))
 }
 
-/// 移行が書き出すことのあるキーの名前。デスクトップアプリが、すべて登録できる名前であることを確かめる。
+/// Key names the importer may write. The desktop app checks that all of them can be registered.
 pub fn key_names() -> impl Iterator<Item = &'static str> {
     (0..=127).filter_map(key_name)
 }
 
-/// macOS の仮想キーコード (US 配列での位置) の名前。グローバルショートカットのライブラリが読める名前にする。
+/// Names of macOS virtual key codes (positions on the US layout), spelled as the global shortcut library reads them.
 fn key_name(code: i64) -> Option<&'static str> {
     Some(match code {
         0 => "a",
@@ -500,7 +500,7 @@ fn convert_action(object: &Object) -> Result<Converted, String> {
                     warnings: Vec::new(),
                 }
             } else {
-                // URL そのものは出さない。トークンを含むことがある。
+                // Do not show the URL itself; it may contain a token.
                 return Err("the URL has no scheme such as https://".into());
             }
         }
@@ -510,7 +510,7 @@ fn convert_action(object: &Object) -> Result<Converted, String> {
                 if path.is_empty() {
                     return Err("it opens an empty path".into());
                 }
-                // `type: app` は `open -a` で起動するので、アプリ以外 (フォルダ、書類) は開けない。
+                // `type: app` launches with `open -a`, so it cannot open anything but apps (folders, documents).
                 if path.trim_end_matches('/').ends_with(".app") {
                     let mut converted = mac(Action::App {
                         app: path.to_string(),
@@ -557,8 +557,8 @@ fn convert_action(object: &Object) -> Result<Converted, String> {
             refuse_arguments(source)?;
             let language = object.config.get("type").and_then(Value::as_u64).unwrap_or(u64::MAX);
             let run = match language {
-                // zsh。Flintkey はスクリプトを利用者のログインシェルで実行するので、zsh 以外のシェルの
-                // 利用者でも zsh で動くように明示する。
+                // zsh. Flintkey runs scripts in the user's login shell, so say zsh explicitly for it to
+                // work for users of other shells too.
                 5 | 11 => heredoc("/bin/zsh", source),
                 0 => heredoc("/bin/bash", source),
                 6 => heredoc("osascript", source),
@@ -572,8 +572,8 @@ fn convert_action(object: &Object) -> Result<Converted, String> {
         "action.applescript" => {
             let source = config_text(object, "applescript");
             refuse_arguments(source)?;
-            // Alfred はこのアクションのコードを `on alfred_script(q)` ハンドラとして書かせ、自分で呼ぶ。
-            // osascript はハンドラを定義するだけで呼ばないので、呼び出しを足す。
+            // Alfred has this action's code written as an `on alfred_script(q)` handler and calls it itself.
+            // osascript only defines the handler without calling it, so add the call.
             let body = if source.to_lowercase().contains("on alfred_script(") {
                 format!("{}\nalfred_script(\"\")\n", source.trim_end())
             } else {
@@ -612,8 +612,8 @@ fn convert_action(object: &Object) -> Result<Converted, String> {
     Ok(converted)
 }
 
-/// Alfred が実行時に置き換える `{query}` などを含むなら変換しない。そのまま渡すと、文字どおりの
-/// `{query}` を開いてしまう。
+/// Not converted if it contains `{query}` or the like, which Alfred replaces at run time. Passed as is,
+/// a literal `{query}` would be opened.
 fn refuse_placeholders(text: &str) -> Result<(), String> {
     const NAMES: [&str; 9] = [
         "query",
@@ -642,7 +642,7 @@ fn refuse_placeholders(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// スクリプトが Alfred から渡される引数を使うなら変換しない。
+/// Not converted if the script uses the argument Alfred passes.
 fn refuse_arguments(source: &str) -> Result<(), String> {
     refuse_placeholders(source)?;
     for marker in ["$1", "${1", "$@", "\"$*\"", "argv"] {
@@ -655,7 +655,7 @@ fn refuse_arguments(source: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 秘密情報を含んでいそうな語。設定フォルダを Git で共有する前に確かめてもらう。
+/// Words that suggest a secret. The user should check before sharing the config folder via Git.
 fn secret_warnings(source: &str) -> Vec<String> {
     const WORDS: [&str; 8] = [
         "token",
@@ -675,7 +675,7 @@ fn secret_warnings(source: &str) -> Vec<String> {
         .collect()
 }
 
-/// `interpreter` に標準入力からスクリプトを渡すシェルのコマンド。
+/// A shell command that feeds the script to `interpreter` on standard input.
 fn heredoc(interpreter: &str, source: &str) -> String {
     let mut marker = "FLINTKEY_SCRIPT".to_string();
     while source.lines().any(|line| line.trim() == marker) {
@@ -685,7 +685,7 @@ fn heredoc(interpreter: &str, source: &str) -> String {
     format!("{interpreter} <<'{marker}'\n{body}\n{marker}\n")
 }
 
-/// シェルの 1 語。引用符が要らなければそのまま。
+/// One shell word. Left as is if it needs no quotes.
 fn shell_word(text: &str) -> String {
     let plain = !text.is_empty()
         && text.chars().all(|c| {
@@ -698,7 +698,7 @@ fn shell_word(text: &str) -> String {
     }
 }
 
-/// シェルに渡すパス。先頭の `~/` は展開されるように引用符の外に出す。
+/// A path for the shell. A leading `~/` is kept outside the quotes so it expands.
 fn shell_path(path: &str) -> String {
     match path.strip_prefix("~/") {
         Some(rest) if !rest.is_empty() => format!("~/{}", shell_word(rest)),
@@ -707,7 +707,7 @@ fn shell_path(path: &str) -> String {
     }
 }
 
-/// アプリを開くアクションなら、アプリの名前 (`/Applications/Google Chrome.app` → `Google Chrome`)。
+/// The app name if the action opens an app (`/Applications/Google Chrome.app` -> `Google Chrome`).
 fn app_name(action: &Action) -> Option<String> {
     let Action::App { app, .. } = action else {
         return None;
@@ -717,7 +717,7 @@ fn app_name(action: &Action) -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
-/// ファイル名に使える id。macOS の既定のファイルシステムは大文字と小文字を区別しないので、小文字にそろえる。
+/// An id usable as a file name. Lowercased because the default macOS file system is case-insensitive.
 fn unique_id(base: &str, taken: &mut HashSet<String>) -> String {
     let mut cleaned = String::new();
     for c in base.trim().chars() {
@@ -801,14 +801,10 @@ mod tests {
     fn keyword_opening_a_url_becomes_a_url_command_tagged_with_the_workflow() {
         // Arrange
         let workflows = [workflow(
-            "TORICO/URL",
+            "Work/URLs",
             vec![
-                keyword("k", "jira||チケット", "Jira を開く"),
-                object(
-                    "a",
-                    "action.openurl",
-                    json!({ "url": "https://example.atlassian.net/" }),
-                ),
+                keyword("k", "tickets||チケット", "チケットを開く"),
+                object("a", "action.openurl", json!({ "url": "https://tickets.example.com/" })),
             ],
             &[("k", "a")],
         )];
@@ -821,19 +817,19 @@ mod tests {
         assert_eq!(
             conversion.commands,
             [Imported {
-                id: "jira".into(),
+                id: "tickets".into(),
                 command: Command {
-                    title: "Jira を開く".into(),
-                    keywords: vec!["jira".into(), "チケット".into()],
+                    title: "チケットを開く".into(),
+                    keywords: vec!["tickets".into(), "チケット".into()],
                     hotkey: None,
                     pin: false,
-                    tags: vec!["TORICO/URL".into()],
+                    tags: vec!["Work/URLs".into()],
                     os: [].into(),
                     action: Action::Url {
-                        url: "https://example.atlassian.net/".into()
+                        url: "https://tickets.example.com/".into()
                     },
                 },
-                origin: "TORICO/URL: keyword `jira||チケット`".into(),
+                origin: "Work/URLs: keyword `tickets||チケット`".into(),
                 warnings: vec![],
             }]
         );
@@ -841,9 +837,9 @@ mod tests {
 
     #[test]
     fn hotkey_opening_an_app_becomes_a_macos_app_command_named_after_the_app() {
-        // Arrange: ctrl+alt+cmd+C (キーコード 8) で Chrome を開く。
+        // Arrange: ctrl+alt+cmd+C (key code 8) opens Chrome.
         let workflows = [workflow(
-            "アプリ切り替えホットキー",
+            "App hotkeys",
             vec![
                 hotkey("h", CTRL_ALT_CMD, 8, "C"),
                 object(
@@ -994,7 +990,7 @@ mod tests {
 
     #[test]
     fn hotkeys_flintkey_cannot_register_are_skipped_with_a_reason() {
-        // Arrange: 修飾キー無し、fn キー (0x800000)、名前の無いキーコード、修飾キー単体。
+        // Arrange: no modifier, the fn key (0x800000), a key code with no name, a modifier alone.
         let cases = [
             json!({ "hotmod": 0, "hotkey": 8 }),
             json!({ "hotmod": 0x80_0000 | CTRL_ALT_CMD, "hotkey": 8 }),
@@ -1015,7 +1011,7 @@ mod tests {
     fn keyword_and_hotkey_on_the_same_action_become_one_command() {
         // Arrange
         let workflows = [workflow(
-            "アプリエイリアス",
+            "App aliases",
             vec![
                 keyword("k", "claude", "Claude"),
                 hotkey("h", 0x14_0000, 49, "Space"),
@@ -1038,13 +1034,13 @@ mod tests {
         assert_eq!(command.hotkey.as_deref(), Some("ctrl+cmd+space"));
         assert_eq!(
             conversion.commands[0].origin,
-            "アプリエイリアス: keyword `claude` + hotkey `ctrl+cmd+space`"
+            "App aliases: keyword `claude` + hotkey `ctrl+cmd+space`"
         );
     }
 
     #[test]
     fn two_keywords_on_one_action_keep_the_hotkey_on_its_own_command() {
-        // Arrange: どちらのキーワードにホットキーを付けるかは決められない。
+        // Arrange: there is no way to decide which keyword gets the hotkey.
         let workflows = [workflow(
             "W",
             vec![
@@ -1303,7 +1299,7 @@ mod tests {
         let mut taken = HashSet::new();
 
         // Act
-        let ids: Vec<String> = ["Today", "today", "a/b: c", "  ", ".hidden", "四柳 slack", "x||y"]
+        let ids: Vec<String> = ["Today", "today", "a/b: c", "  ", ".hidden", "自分の slack", "x||y"]
             .iter()
             .map(|base| unique_id(base, &mut taken))
             .collect();
@@ -1311,13 +1307,13 @@ mod tests {
         // Assert
         assert_eq!(
             ids,
-            ["today", "today-2", "a-b-c", "alfred", "hidden", "四柳-slack", "x-y"]
+            ["today", "today-2", "a-b-c", "alfred", "hidden", "自分の-slack", "x-y"]
         );
     }
 
     #[test]
     fn ids_follow_the_workflow_names_so_a_second_import_gives_the_same_ids() {
-        // Arrange: 同じキーワードを持つワークフローを、名前と逆の順に渡す。
+        // Arrange: pass workflows with the same keyword in reverse name order.
         let first = || {
             workflow(
                 "B",
@@ -1389,7 +1385,7 @@ mod tests {
 
     #[test]
     fn every_converted_command_is_a_valid_command_file() {
-        // Arrange: 変換結果はそのまま保存される。読み戻せないものを作らない。
+        // Arrange: conversions are saved as is, so never produce something that cannot be read back.
         let workflows = [workflow(
             "on",
             vec![

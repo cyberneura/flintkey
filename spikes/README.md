@@ -1,28 +1,28 @@
-# スパイク
+# Spikes
 
-設計上の 2 つの問いに答えるための実験。製品には入らない。
+Experiments that answer two design questions. They are not part of the product.
 
-| フォルダ | 問い |
+| Folder | Question |
 |---|---|
-| `yaml-edit/` | 設定 UI は、手書きの YAML をコメントと書式を壊さずに書き換えられるか |
-| `gpui-launcher/` | GPUI (`gpui-kit`) のランチャー窓はどのくらい速いか |
-| `tauri-launcher/` | 同じ窓を Tauri 2 (OS の WebView) で作るとどのくらい速いか |
-| `common/` | 2 つのランチャーが共有する負荷: 候補 1000 件、あいまい検索、入力するキー |
-| `results/` | macOS で計測した生データ |
+| `yaml-edit/` | Can the settings UI rewrite hand-written YAML without breaking its comments and formatting? |
+| `gpui-launcher/` | How fast is a launcher window built with GPUI (`gpui-kit`)? |
+| `tauri-launcher/` | How fast is the same window built with Tauri 2 (the OS WebView)? |
+| `common/` | The workload both launchers share: 1000 candidates, fuzzy search, the keys to type |
+| `results/` | Raw data measured on macOS |
 
-## YAML の編集
+## YAML editing
 
 ```shell
-cd spikes/yaml-edit && cargo run          # -- -v を付けると全ケースの出力を表示
+cd spikes/yaml-edit && cargo run          # add -- -v to print the output of every case
 ```
 
-各ケースは、コメント付きのコマンドファイルを `yaml-edit` で編集し、触れていない行がバイト単位で
-同じであることと、結果を `serde-saphyr` で読み直すと期待した値になることを確かめる。
+Each case edits a commented command file with `yaml-edit`, then checks that the lines it did not touch are
+byte-for-byte identical and that reading the result back with `serde-saphyr` gives the expected values.
 
-## エンジンのベンチマーク
+## Engine benchmark
 
-どちらのアプリも `--bench <out.json>` を受け付け、自分で計測して終了する。画面が必要なので、
-通常のターミナルから実行する。
+Both apps accept `--bench <out.json>`, measure themselves and exit. They need a screen, so run them
+from a normal terminal.
 
 ```shell
 (cd spikes/gpui-launcher && cargo build --release)
@@ -30,60 +30,60 @@ cd spikes/yaml-edit && cargo run          # -- -v を付けると全ケースの
 python3 spikes/run-engine-bench.py
 ```
 
-ウインドウが点滅する間は、キーボードとマウスに触らない。結果は `spikes/results/` に出る。
+Do not touch the keyboard or mouse while the windows flash. The results go to `spikes/results/`.
 
-計測する項目:
+What is measured:
 
-| フィールド | 意味 |
+| Field | Meaning |
 |---|---|
-| `cold_start_ms` | プロセスの開始から、ランチャー窓の最初のフレームまで |
-| `show_ms` | 隠した窓の表示要求から、再表示後の最初のフレームまで (20 回) |
-| `reopen_ms` | 窓を閉じて新しく開き、その最初のフレームまで (GPUI のみ) |
-| `type_total_ms` | キー 1 つから、新しい結果一覧を描いたフレームまで (11 キー、候補 1000 件) |
-| `type_filter_us` | そのうち、あいまい検索にかかった時間 |
-| `processes_while_idle` | 隠してアイドルにした状態での、アプリと WebView のヘルパープロセスのメモリ |
+| `cold_start_ms` | From process start to the first frame of the launcher window |
+| `show_ms` | From the request to show the hidden window to the first frame after it reappears (20 times) |
+| `reopen_ms` | From closing the window and opening a new one to its first frame (GPUI only) |
+| `type_total_ms` | From one key to the frame that draws the new result list (11 keys, 1000 candidates) |
+| `type_filter_us` | The part of that spent in the fuzzy search |
+| `processes_while_idle` | Memory of the app and its WebView helper processes while hidden and idle |
 
-この方法の限界:
+Limits of this method:
 
-- どちらも、画素が画面に出た時点は測れていない。
-  - Tauri: メインスレッドの描画処理が済んだ時点 (`requestAnimationFrame` の直後のタスク)。
-    GPU プロセスでの合成は含まない。`show_ms` と `cold_start_ms` は、その通知が IPC で
-    Rust 側に届いた時点なので、IPC の往復 1 回分を含む。
-  - GPUI: `on_next_frame` のコールバックはフレームを描く前に呼ばれるので、描画の完了を直接は
-    観測できない。現在のコードは「その次のフレームの開始」で測る。描画と表示は済んでいるが、
-    最大 1 リフレッシュ分遅い (上限値)。
-- 表示要求はアプリ自身が出す。グローバルホットキーの処理時間は含まない
-  (どちらのエンジンでも同じ OS の API を使うことになる)。
-- Tauri は上位 50 行を描く。GPUI は仮想リストで、窓に収まる行だけを描く。
-- 入力は模擬。GPUI には合成したキー入力を送り、WebView は入力欄の値を書き換える。
-  どちらも OS の IME を通らない。
+- Neither measures the moment the pixels reach the screen.
+  - Tauri: the point where the main thread's rendering work is done (the task right after
+    `requestAnimationFrame`). Compositing in the GPU process is not included. `show_ms` and `cold_start_ms`
+    are taken when that notification reaches the Rust side over IPC, so they include one IPC round trip.
+  - GPUI: the `on_next_frame` callback runs before the frame is drawn, so the end of drawing cannot be
+    observed directly. The current code measures at "the start of the following frame". Drawing and
+    presenting are done by then, but it can be up to one refresh late (an upper bound).
+- The app issues the show request itself. The time to handle a global hotkey is not included
+  (both engines would use the same OS API for it).
+- Tauri draws the top 50 rows. GPUI uses a virtual list and draws only the rows that fit in the window.
+- Input is simulated. GPUI is sent synthesized keystrokes; for the WebView, the input field's value is
+  rewritten. Neither goes through the OS IME.
 
-`results/` の読み方:
+How to read `results/`:
 
-| フォルダ | GPUI の計測点 | GPUI の窓 |
+| Folder | GPUI measurement point | GPUI window |
 |---|---|---|
-| `run1/` `run2/` | 変更を描くフレームの開始 (描画時間を含まない。下限値) | タイトルバーあり |
-| `run3/` (GPUI のみ) | その次のフレームの開始 (上限値) | タイトルバーなし |
+| `run1/` `run2/` | Start of the frame that draws the change (excludes drawing time; a lower bound) | With title bar |
+| `run3/` (GPUI only) | Start of the following frame (an upper bound) | Without title bar |
 
-`run1/` の GPUI の `cold_start_ms` は、最初の窓を出す前にアプリをアクティブ化していなかったため
-過大 (約 2000 ms)。`run2/` 以降は修正済み。
+In `run1/`, GPUI's `cold_start_ms` is too high (about 2000 ms) because the app was not activated before the
+first window was shown. Fixed from `run2/` on.
 
-画面なしで確かめられるのは、あいまい検索だけ:
+Only the fuzzy search can be checked without a screen:
 
 ```shell
 cd spikes/common && cargo run --release --bin search-bench
 ```
 
-## 日本語入力 (手動)
+## Japanese input (manual)
 
-各アプリを引数なしで起動し、検索欄に日本語を入力して次を確かめる。
+Start each app with no arguments, type Japanese into the search field and check that:
 
-1. 変換中の文字が、欄の中に下線付きで出る
-2. 変換候補のウインドウが、カーソルの真下に出る
-3. Enter で確定だけされる
-4. 文字が欠けたり二重になったりしない
+1. The text being composed appears underlined inside the field
+2. The candidate window appears right below the cursor
+3. Enter only commits the composition
+4. No characters are dropped or doubled
 
 ```shell
-spikes/gpui-launcher/target/release/spike-gpui-launcher     # Esc か Cmd+Q で閉じる
-spikes/tauri-launcher/target/release/spike-tauri-launcher   # Esc で閉じる
+spikes/gpui-launcher/target/release/spike-gpui-launcher     # Esc or Cmd+Q closes it
+spikes/tauri-launcher/target/release/spike-tauri-launcher   # Esc closes it
 ```

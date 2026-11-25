@@ -1,11 +1,11 @@
 use std::fmt;
 
-/// 設定ファイルの問題 1 件。位置が分かる場合は位置を持つ。
+/// One problem in a configuration file, with its location when known.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
-    /// ファイル内の行 (1 始まり)。
+    /// Line in the file (1-based).
     pub line: Option<u64>,
-    /// 行内の桁 (1 始まり)。
+    /// Column in the line (1-based).
     pub column: Option<u64>,
     pub message: String,
 }
@@ -28,7 +28,7 @@ impl Diagnostic {
     }
 
     pub(crate) fn from_yaml_error(error: &serde_saphyr::Error) -> Self {
-        // 既定の文字列化はソースの抜粋を付ける。該当行の表示は呼び出し側が行う。
+        // The default formatting appends a source excerpt. Callers show the line themselves.
         let message = error.without_snippet().to_string();
         match error.location() {
             Some(location) => Self::at(location.line(), location.column(), message),

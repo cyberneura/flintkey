@@ -1,7 +1,7 @@
-//! コマンドの実行がこのマシンで何を意味するかを決め、実行する。
+//! Decides what running a command means on this machine, and runs it.
 //!
-//! [`plan`] はアクションとマシンの情報だけで決まる純粋な関数なので、どの OS 向けの挙動も
-//! 手元の OS でテストできる。[`execute`] が計画を実行する。
+//! [`plan`] is a pure function of the action and the machine info, so the behavior for any OS
+//! can be tested on the local OS. [`execute`] carries out the plan.
 
 use crate::command::{Action, Os};
 use crate::paths::expand_home;
@@ -10,7 +10,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// `terminal` コマンドが開く端末アプリ。
+/// The terminal app a `terminal` command opens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerminalApp {
     Terminal,
@@ -47,22 +47,22 @@ impl TerminalApp {
     }
 }
 
-/// 計画が依存するマシンの情報。
+/// The machine info a plan depends on.
 #[derive(Debug, Clone)]
 pub struct Machine<'a> {
     pub os: Os,
     pub home: &'a Path,
-    /// ユーザーのログインシェル (`$SHELL`)。分かる場合だけ。
+    /// The user's login shell (`$SHELL`), when known.
     pub shell: Option<&'a str>,
-    /// このプロセスが起動されたときの `PATH`。
+    /// The `PATH` this process was started with.
     pub path: Option<&'a str>,
-    /// 設定で選んだ端末。`None` なら OS 標準の端末を使う。
+    /// The terminal chosen in settings. `None` uses the OS default terminal.
     pub terminal: Option<TerminalApp>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Plan {
-    /// 対象を OS に渡す。OS が関連付けられたアプリで開く。
+    /// Hands the target to the OS, which opens it with the associated app.
     Open {
         target: String,
     },
@@ -74,14 +74,14 @@ pub struct Process {
     pub program: String,
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
-    /// 継承した環境に追加する変数。値は設定に書かれたままで、秘密情報の参照は
-    /// 解決されていない。
+    /// Variables added to the inherited environment. Values are as written in the config;
+    /// secret references are not resolved.
     pub env: Vec<(String, String)>,
 }
 
 impl fmt::Debug for Process {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // 環境変数の値は、参照でなく直接書かれた機密でありうるので、ログに出さない。
+        // Environment values may be secrets written directly rather than references, so never log them.
         let names: Vec<&str> = self.env.iter().map(|(name, _)| name.as_str()).collect();
         f.debug_struct("Process")
             .field("program", &self.program)
@@ -102,11 +102,11 @@ pub enum LaunchError {
     Io(#[from] std::io::Error),
 }
 
-/// Dock から起動した macOS アプリの PATH に入っていないフォルダ。これが無いと、
-/// スクリプトはユーザーが入れたツールではなく、OS 同梱の古いツールを見つけてしまう。
+/// Folders missing from the PATH of a macOS app started from the Dock. Without them,
+/// scripts find the old tools bundled with the OS instead of the ones the user installed.
 const MACOS_EXTRA_PATH: [&str; 2] = ["/opt/homebrew/bin", "/usr/local/bin"];
 
-/// `-l` を受け付けて、ユーザーのプロファイルを読み込むことが分かっているシェル。
+/// Shells known to accept `-l` and load the user's profile.
 const LOGIN_SHELLS: [&str; 4] = ["zsh", "bash", "fish", "ksh"];
 
 fn sh_quote(text: &str) -> String {
@@ -164,8 +164,8 @@ fn script_process(run: &str, cwd: Option<&str>, env: Vec<(String, String)>, mach
     }
 }
 
-/// コマンドラインを引数で受け取る AppleScript。コマンドを AppleScript のソースに
-/// 埋め込まないので、エスケープが要らない。
+/// AppleScript that takes the command line as an argument. The command is not embedded in
+/// the AppleScript source, so no escaping is needed.
 fn osascript(lines: &[&str], command_line: String) -> Process {
     let mut args = Vec::new();
     for line in lines {
@@ -207,9 +207,9 @@ fn terminal_process(run: &str, cwd: Option<&str>, machine: &Machine) -> Result<P
             &[
                 "on run argv",
                 "tell application \"Terminal\"",
-                // 起動していなかった Terminal は、起動時に空のウインドウを 1 つ開く。2 つ目を開かず、
-                // そのウインドウにコマンドを入れる。起動中の Terminal はウインドウが 0 個のことが
-                // あるので、"window 1" を使うのは起動直後だけにする。
+                // A Terminal that was not running opens one empty window on launch. Put the command in that
+                // window instead of opening a second one. A running Terminal can have zero windows,
+                // so use "window 1" only right after launch.
                 "set wasRunning to running",
                 "activate",
                 "if (not wasRunning) and (count of windows) > 0 then",
@@ -224,8 +224,8 @@ fn terminal_process(run: &str, cwd: Option<&str>, machine: &Machine) -> Result<P
         ),
         TerminalApp::WindowsTerminal => {
             let mut args = Vec::new();
-            // Windows Terminal は引数の中でも `;` でコマンドラインを区切る。フォルダ名や
-            // ユーザーのコマンドに含まれる `;` はエスケープする。
+            // Windows Terminal splits command lines on `;` even inside arguments. Escape `;` in
+            // folder names and in the user's command.
             let escape = |text: &str| text.replace(';', "\\;");
             if let Some(dir) = &cwd {
                 args.extend(["-d".to_string(), escape(&dir.to_string_lossy())]);
@@ -247,7 +247,7 @@ fn terminal_process(run: &str, cwd: Option<&str>, machine: &Machine) -> Result<P
 }
 
 fn app_plan(app: &str, args: &[String], machine: &Machine) -> Plan {
-    // アプリはシェルを通さずに渡すので、`~/` はここで展開しないと名前の一部として扱われる。
+    // Apps are launched without a shell, so `~/` must be expanded here or it is taken as part of the name.
     let expanded = app
         .starts_with("~/")
         .then(|| expand_home(app, machine.home).display().to_string());
@@ -266,8 +266,8 @@ fn app_plan(app: &str, args: &[String], machine: &Machine) -> Plan {
                 env: Vec::new(),
             })
         }
-        // 引数が無ければシェルに任せる。名前・ショートカット・登録済みアプリの解決は、
-        // プロセスの直接起動ではできない。
+        // Without arguments, leave it to the shell. Resolving names, shortcuts and registered apps
+        // is not possible when starting the process directly.
         Os::Windows if args.is_empty() => Plan::Open {
             target: app.to_string(),
         },
@@ -280,10 +280,9 @@ fn app_plan(app: &str, args: &[String], machine: &Machine) -> Plan {
     }
 }
 
-/// `action` の実行が `machine` 上で何を意味するかを決める。
+/// Decides what running `action` means on `machine`.
 ///
-/// 秘密情報には触れない。計画を表示するだけで 1Password のロック解除を求めることが
-/// 無いようにするため。
+/// Does not touch secrets, so merely showing a plan never asks to unlock 1Password.
 pub fn plan(action: &Action, machine: &Machine) -> Result<Plan, LaunchError> {
     Ok(match action {
         Action::Url { url } => Plan::Open { target: url.clone() },
@@ -296,11 +295,11 @@ pub fn plan(action: &Action, machine: &Machine) -> Result<Plan, LaunchError> {
     })
 }
 
-/// 計画を実行する。終了は待たない。
+/// Runs the plan without waiting for it to finish.
 ///
-/// 環境変数に含まれる秘密情報の参照は、起動の直前にまとめて 1 回で解決する。解決した値は
-/// この関数の中にしか存在せず、子プロセスに渡した時点で破棄する。解決は 1Password の
-/// ロック解除を待って止まることがあるので、UI スレッドから呼ばないこと。
+/// Secret references in environment variables are resolved together, once, right before launch.
+/// The resolved values exist only inside this function and are dropped once passed to the child.
+/// Resolving can block waiting for 1Password to unlock, so do not call this from the UI thread.
 pub fn execute(plan: &Plan, secrets: &dyn SecretResolver) -> Result<(), LaunchError> {
     let process = match plan {
         Plan::Open { target } => return Ok(open::that_detached(target)?),
@@ -314,11 +313,11 @@ pub fn execute(plan: &Plan, secrets: &dyn SecretResolver) -> Result<(), LaunchEr
         .cloned()
         .collect();
     let resolved = secrets.resolve(&references)?;
-    // 数が合わないまま進めると、足りない分が空の値でスクリプトに渡ってしまう。
+    // Going on with a count mismatch would pass the missing ones to the script as empty values.
     if resolved.len() != references.len() {
         return Err(SecretError::UnexpectedOutput.into());
     }
-    // 空の値は、設定の誤りである可能性が高い。空の認証情報でスクリプトを走らせない。
+    // An empty value is most likely a config mistake. Do not run a script with empty credentials.
     if let Some(index) = resolved.iter().position(String::is_empty) {
         return Err(SecretError::Empty(references[index].clone()).into());
     }
@@ -341,7 +340,7 @@ pub fn execute(plan: &Plan, secrets: &dyn SecretResolver) -> Result<(), LaunchEr
         }
     }
     let mut child = command.spawn()?;
-    // ランチャーは何日も動き続ける。wait しない子プロセスはゾンビとして残る。
+    // The launcher runs for days. A child that is never waited on stays as a zombie.
     std::thread::spawn(move || {
         let _ = child.wait();
     });
@@ -353,7 +352,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    /// `op://a/b` を `value-of(op://a/b)` に解決し、呼ばれ方を記録する。
+    /// Resolves `op://a/b` to `value-of(op://a/b)` and records how it was called.
     #[derive(Default)]
     struct FakeSecrets {
         calls: std::cell::RefCell<Vec<Vec<String>>>,
@@ -381,7 +380,7 @@ mod tests {
         }
     }
 
-    /// 参照がいくつあっても値を 1 つも返さない、契約違反の解決器。
+    /// A resolver that breaks the contract by returning no values however many references there are.
     struct ForgetfulSecrets;
 
     impl SecretResolver for ForgetfulSecrets {
@@ -390,7 +389,7 @@ mod tests {
         }
     }
 
-    /// 環境変数 `TOKEN` と `PLAIN` を `out.txt` に書き出すスクリプトの計画。
+    /// A plan for a script that writes the environment variables `TOKEN` and `PLAIN` to `out.txt`.
     #[cfg(unix)]
     fn env_dumping_plan(dir: &Path, env: &[(&str, &str)]) -> Plan {
         Plan::Spawn(Process {
@@ -404,7 +403,7 @@ mod tests {
         })
     }
 
-    /// 起動は終了を待たないので、ファイルが期待した内容になるまで短時間ポーリングする。
+    /// Launching does not wait for exit, so poll briefly until the file has the expected content.
     #[cfg(unix)]
     fn wait_for_content(path: &Path, expected: &str) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -744,7 +743,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn resolver_that_returns_too_few_values_stops_the_launch() {
-        // Arrange: 黙って進めると、スクリプトが空の秘密情報で走る。
+        // Arrange: carrying on silently would run the script with empty secrets.
         let dir = tempfile::tempdir().unwrap();
         let plan = env_dumping_plan(dir.path(), &[("A_TOKEN", "op://Private/A/token")]);
 
@@ -763,7 +762,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn empty_secret_stops_the_launch() {
-        // Arrange: 空の認証情報でスクリプトを走らせるより、止めて知らせる。
+        // Arrange: stopping and reporting is better than running the script with empty credentials.
         struct EmptySecrets;
         impl SecretResolver for EmptySecrets {
             fn resolve(&self, references: &[String]) -> Result<Vec<String>, SecretError> {
@@ -805,7 +804,7 @@ mod tests {
 
     #[test]
     fn macos_terminal_receives_the_command_as_an_argument_not_as_script_source() {
-        // Arrange: 引用符とバックスラッシュは、AppleScript のソースに埋め込むならエスケープが要る。
+        // Arrange: quotes and backslashes would need escaping if embedded in AppleScript source.
         let run = r#"echo "it's" \ done"#;
         let action = Action::Terminal {
             run: run.into(),

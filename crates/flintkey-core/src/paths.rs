@@ -1,15 +1,15 @@
-//! Flintkey がファイルを置く場所。
+//! Where Flintkey keeps its files.
 //!
-//! 設定はどの OS でも `~/.config/flintkey` に置く。1 つの Git リポジトリを全マシンで
-//! 共有できるようにするため。使用回数などマシン固有の状態は別の場所に置く。
-//! 設定フォルダに置くと、起動のたびに差分が出てしまう。
+//! Configuration lives in `~/.config/flintkey` on every OS, so one Git repository can be shared
+//! across all machines. Machine-specific state such as usage counts lives elsewhere;
+//! in the config folder it would produce a diff on every launch.
 
 use crate::command::Os;
 use std::path::{Path, PathBuf};
 
-/// 設定フォルダを差し替える。テストと、本物の設定に触れずに別の設定を試す用途。
+/// Overrides the config folder. For tests, and for trying another config without touching the real one.
 pub const CONFIG_DIR_ENV: &str = "FLINTKEY_CONFIG_DIR";
-/// 状態フォルダを差し替える。
+/// Overrides the state folder.
 pub const STATE_DIR_ENV: &str = "FLINTKEY_STATE_DIR";
 
 pub fn config_dir_in(home: &Path, override_dir: Option<&str>) -> PathBuf {
@@ -29,13 +29,13 @@ pub fn state_dir_in(os: Os, home: &Path, local_app_data: Option<&str>, override_
     }
 }
 
-/// 現在のユーザーの設定フォルダ。ホームディレクトリが無ければ `None`。
+/// The current user's config folder. `None` if there is no home directory.
 pub fn config_dir() -> Option<PathBuf> {
     let home = std::env::home_dir()?;
     Some(config_dir_in(&home, std::env::var(CONFIG_DIR_ENV).ok().as_deref()))
 }
 
-/// 現在のユーザーの状態フォルダ。ホームディレクトリが無ければ `None`。
+/// The current user's state folder. `None` if there is no home directory.
 pub fn state_dir() -> Option<PathBuf> {
     let home = std::env::home_dir()?;
     Some(state_dir_in(
@@ -46,7 +46,7 @@ pub fn state_dir() -> Option<PathBuf> {
     ))
 }
 
-/// 先頭の `~` をホームディレクトリに置き換える。`~user` はそのまま残す。
+/// Replaces a leading `~` with the home directory. `~user` is left as is.
 pub fn expand_home(path: &str, home: &Path) -> PathBuf {
     if path == "~" {
         return home.to_path_buf();

@@ -1,20 +1,20 @@
-//! 窓の表示 1 回ごとの番号と、その表示がまだ実行を受け付けるかどうか。
+//! A number for each showing of the window, and whether that showing still accepts a run.
 //!
-//! ページからの実行要求は遅れて届くことがある。届いた時点で窓が閉じて開き直されていたら、
-//! その要求は利用者がいま見ている一覧に対するものではない。要求に表示の番号を付けさせて照合する。
+//! Run requests from the page can arrive late. If the window was closed and reopened by then, the request
+//! is not for the list the user is looking at now. Requests carry the showing number so they can be matched.
 
 #[derive(Debug, Default)]
 pub struct Showing {
-    /// 最後に振った番号。
+    /// The last number handed out.
     counter: u64,
-    /// 今の表示の番号。窓が隠れている間は 0。
+    /// The current showing's number. 0 while the window is hidden.
     id: u64,
-    /// 今の表示が、まだ実行を受け付けるか。1 回の表示で実行するのは 1 件だけ。
+    /// Whether the current showing still accepts a run. One run per showing.
     accepting: bool,
 }
 
 impl Showing {
-    /// 窓を出した。新しい表示の番号を返す。
+    /// The window was shown. Returns the new showing's number.
     pub fn begin(&mut self) -> u64 {
         self.counter += 1;
         self.id = self.counter;
@@ -22,12 +22,12 @@ impl Showing {
         self.id
     }
 
-    /// 今の表示の番号。窓が隠れている間は 0。
+    /// The current showing's number. 0 while the window is hidden.
     pub fn id(&self) -> u64 {
         self.id
     }
 
-    /// 表示 `id` からの実行要求を受け付けるか。受け付けたら、同じ表示からの次の要求は断る。
+    /// Whether to accept a run request from showing `id`. Once accepted, further requests from it are refused.
     pub fn claim(&mut self, id: u64) -> bool {
         if !self.accepting || id != self.id {
             return false;
@@ -36,14 +36,14 @@ impl Showing {
         true
     }
 
-    /// 受け付けた要求が実行に至らなかった。同じ表示のままなら、選び直せるように戻す。
+    /// An accepted request did not lead to a run. If the showing is unchanged, allow another pick.
     pub fn release(&mut self, id: u64) {
         if id == self.id {
             self.accepting = true;
         }
     }
 
-    /// 窓を隠した。
+    /// The window was hidden.
     pub fn end(&mut self) {
         self.id = 0;
         self.accepting = false;
@@ -122,7 +122,7 @@ mod tests {
 
     #[test]
     fn releasing_after_the_window_was_reopened_does_not_touch_the_new_showing() {
-        // Arrange: 要求を受け付けたあとに窓が閉じて開き直され、新しい表示が 1 件を実行済み。
+        // Arrange: after a request was accepted, the window was reopened and the new showing already ran one.
         let mut showing = Showing::default();
         let earlier = showing.begin();
         assert!(showing.claim(earlier));

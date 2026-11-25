@@ -63,7 +63,7 @@ describe('latestOnly', () => {
   });
 
   it('settled waits until the latest request has been applied', async () => {
-    // Arrange: Enter は、打ち終えた文字の検索結果が届いてから実行する必要がある。
+    // Arrange: Enter must run only after the results for the finished text arrive.
     const applied: string[] = [];
     const results = latestOnly<string>((value) => applied.push(value));
     const pending = deferred<string>();
@@ -83,7 +83,7 @@ describe('latestOnly', () => {
   });
 
   it('settled also waits for a request made while it was waiting', async () => {
-    // Arrange: 検索 A の待機中に Enter を押し、さらに 1 文字打って検索 B を出した。A が先に返る。
+    // Arrange: Enter was pressed while search A was pending, then one more character started search B. A returns first.
     const applied: string[] = [];
     const results = latestOnly<string>((value) => applied.push(value));
     const a = deferred<string>();

@@ -1,7 +1,7 @@
-//! スパイク: GPUI (gpui-kit) で作る最小のランチャー窓。
+//! Spike: a minimal launcher window built with GPUI (gpui-kit).
 //!
-//! `spike-gpui-launcher`                 窓を開く。人が IME を試すためのもの (Esc か Cmd+Q で終了)。
-//! `spike-gpui-launcher --bench out.json` 自分で計測して終了する。
+//! `spike-gpui-launcher`                 Opens the window, for a person to try the IME (Esc or Cmd+Q quits).
+//! `spike-gpui-launcher --bench out.json` Measures itself and exits.
 
 use futures::channel::oneshot;
 use futures::future::{select, Either};
@@ -95,7 +95,7 @@ impl Render for Launcher {
     }
 }
 
-/// 表示の計測中に、ランチャー窓の可視状態のオブザーバーが埋める。
+/// Filled in by the launcher window's visibility observer while a show is being measured.
 #[derive(Default)]
 struct ShowProbe {
     requested_at: Option<Instant>,
@@ -113,19 +113,19 @@ fn window_options(cx: &App) -> WindowOptions {
     let bounds = Bounds::centered(None, size(px(720.0), px(480.0)), cx);
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
-        // ランチャーは枠なしのパネル。タイトルバーを出さないので、信号機ボタンも出ない。
+        // The launcher is a frameless panel. With no title bar there are no traffic-light buttons either.
         titlebar: None,
         kind: WindowKind::PopUp,
         ..Default::default()
     }
 }
 
-/// 次に描かれるフレームの描画と表示が終わった後に `done` を呼ぶ。
+/// Calls `done` after the next frame has been drawn and presented.
 ///
-/// GPUI は `on_next_frame` のコールバックを、そのフレームを描く前に呼ぶ。1 つ目の
-/// コールバックの中でもう一度登録すると、2 つ目はその次のフレームの先頭、つまり 1 つ目の
-/// フレームを描いて表示した後に呼ばれる。実際の描画完了より最大 1 リフレッシュ分遅いので、
-/// この計測値は上限になる。
+/// GPUI calls an `on_next_frame` callback before it draws that frame. Registering again inside
+/// the first callback makes the second one run at the start of the following frame, that is,
+/// after the first frame has been drawn and presented. That is up to one refresh later than the
+/// actual end of drawing, so this measurement is an upper bound.
 fn after_frame_drawn(window: &Window, done: impl FnOnce() + 'static) {
     window.on_next_frame(move |window, _| window.on_next_frame(move |_, _| done()));
 }
@@ -166,7 +166,7 @@ async fn pause(cx: &AsyncApp, duration: Duration) {
     cx.background_executor().timer(duration).await;
 }
 
-/// 手順が時間内に終わらなければ `None`。壊れた 1 手順で計測全体が止まらないようにするため。
+/// `None` if the step does not finish in time, so one broken step does not stall the whole run.
 async fn within_timeout<T>(cx: &AsyncApp, receiver: oneshot::Receiver<T>) -> Option<T> {
     let timer = cx.background_executor().timer(common::STEP_TIMEOUT);
     futures::pin_mut!(timer);
@@ -252,8 +252,8 @@ async fn run_bench(process_start: Instant, startup_notes: Vec<String>, out: Path
     }
     report.write(&out);
 
-    // GPUI にはウインドウ単位の hide が無く、アプリ単位の hide は Windows では何もしない。
-    // 移植できる代替は「閉じて新しい窓を開く」なので、そのコストを測る。
+    // GPUI has no per-window hide, and the app-wide hide does nothing on Windows.
+    // The portable alternative is "close it and open a new window", so measure what that costs.
     let mut current = opened.handle;
     for _ in 0..common::REOPEN_CYCLES {
         let _ = current.update(cx, |_, window, _| window.remove_window());
@@ -279,7 +279,7 @@ async fn run_bench(process_start: Instant, startup_notes: Vec<String>, out: Path
     report.self_footprint_kb = common::self_footprint_kb();
     report.phase = "idle".into();
     report.write(&out);
-    // ランナースクリプトは、phase が "idle" の間にプロセスの一覧を取る。
+    // The runner script takes the process list while phase is "idle".
     pause(cx, Duration::from_secs(4)).await;
     report.phase = "done".into();
     report.write(&out);
@@ -301,7 +301,7 @@ fn main() {
                 .spawn(async move |cx| run_bench(process_start, startup_notes, out, cx).await)
                 .detach(),
             None => {
-                // タイトルバーが無いと閉じるボタンも無いので、キーボードで終了できるようにする。
+                // Without a title bar there is no close button, so allow quitting from the keyboard.
                 cx.on_action(|_: &Quit, cx| cx.quit());
                 cx.bind_keys([
                     KeyBinding::new("escape", Quit, None),

@@ -1,8 +1,8 @@
-//! 入力された文字に対するコマンドの順位付け。
+//! Ranking commands against the typed query.
 //!
-//! 並び順は説明できるものにしている。設定には並び順を保存しない (順序のリストは Git で
-//! 真っ先にコンフリクトする)。キーワードの一致、一致の質、ピン留め、このマシンでの
-//! 使用回数で並べる。
+//! The order is explainable. No order is stored in the config (an ordered list is the first thing
+//! to conflict in Git). Commands are ranked by keyword match, match quality, pinning, and
+//! usage count on this machine.
 
 use crate::store::StoredCommand;
 use crate::usage::Usage;
@@ -24,7 +24,7 @@ impl Default for Searcher {
     }
 }
 
-/// コマンドがどう一致したか。良い順。
+/// How a command matched, best first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Tier {
     KeywordExact,
@@ -33,9 +33,9 @@ enum Tier {
 }
 
 impl Searcher {
-    /// `commands` の添字を、良く一致した順に返す。一致しないコマンドは含めない。
+    /// Returns indices into `commands`, best match first. Commands that do not match are left out.
     ///
-    /// 空のクエリは全件を返す。ピン留め、次に使用回数の多い順。
+    /// An empty query returns all of them: pinned first, then by usage count.
     pub fn rank(&mut self, commands: &[StoredCommand], usage: &Usage, query: &str) -> Vec<usize> {
         let query = query.trim();
         let title_key = |index: usize| (commands[index].command.title.to_lowercase(), commands[index].id.clone());
@@ -47,8 +47,8 @@ impl Searcher {
             return all;
         }
 
-        // 入力された文字はそのまま照合する。単語の順序は問わないが、fzf の構文のように
-        // `!` や `^` に特別な意味は持たせない。
+        // The query is matched literally. Word order does not matter, but `!` and `^` have no
+        // special meaning as they do in fzf syntax.
         let pattern = Pattern::new(query, CaseMatching::Ignore, Normalization::Smart, AtomKind::Fuzzy);
         let lowered_query = query.to_lowercase();
         let mut matched: Vec<(Tier, Reverse<u32>, usize)> = Vec::new();
@@ -69,7 +69,7 @@ impl Searcher {
                 fuzzy.map(|_| Tier::Fuzzy)
             };
             if let Some(tier) = tier {
-                // 一致の質で並べるのは、あいまい一致の層だけ。キーワード一致の層は使用回数で決まる。
+                // Only the fuzzy tier is ordered by match quality. The keyword tier is ordered by usage.
                 let quality = if tier == Tier::Fuzzy { fuzzy.unwrap_or(0) } else { 0 };
                 matched.push((tier, Reverse(quality), index));
             }
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn any_of_the_keywords_counts_as_the_keyword() {
-        // Arrange: Alfred の `a||b` から移した別名。2 つ目の別名でも最優先で選ばれる。
+        // Arrange: aliases carried over from Alfred's `a||b`. The second alias is also ranked first.
         let commands = [
             command("title", "today report", None, false),
             command("alias", "日付を貼る", Some("今日|today"), false),
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn punctuation_in_the_query_is_matched_literally() {
-        // Arrange: fzf の構文では、`!blog` は「blog を含まないもの」を意味する。
+        // Arrange: in fzf syntax, `!blog` means "does not contain blog".
         let commands = [
             command("a", "Deploy blog", None, false),
             command("b", "Run !important", None, false),

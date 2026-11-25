@@ -1,8 +1,8 @@
-//! 秘密情報の参照。
+//! Secret references.
 //!
-//! `op://Private/GitHub/token` のような設定値は秘密そのものではなく、秘密への参照。
-//! コマンドを実行する直前に 1Password CLI で解決して、子プロセスに渡す。
-//! ディスクには書かず、メモリにも保持しない。
+//! A config value like `op://Private/GitHub/token` is not the secret but a reference to it.
+//! It is resolved with the 1Password CLI right before the command runs and passed to the child process.
+//! The value is never written to disk or kept in memory.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -30,11 +30,11 @@ pub enum SecretError {
 }
 
 pub trait SecretResolver {
-    /// 参照 1 つにつき値を 1 つ、同じ順序で返す。
+    /// Returns one value per reference, in the same order.
     fn resolve(&self, references: &[String]) -> Result<Vec<String>, SecretError>;
 }
 
-/// `op inject` で参照を解決する。
+/// Resolves references with `op inject`.
 pub struct OnePassword {
     program: PathBuf,
 }
@@ -46,8 +46,8 @@ impl OnePassword {
         }
     }
 
-    /// パッケージマネージャーが入れる場所から `op` を探す。Dock やスタートメニューから
-    /// 起動したアプリはシェルの PATH を引き継がないので、名前だけでの起動は最後の手段。
+    /// Looks for `op` where package managers install it. Apps started from the Dock or Start menu
+    /// do not inherit the shell's PATH, so running it by bare name is the last resort.
     pub fn locate() -> Self {
         let known = ["/opt/homebrew/bin/op", "/usr/local/bin/op"];
         let found = known.iter().map(Path::new).find(|path| path.is_file());
@@ -57,7 +57,7 @@ impl OnePassword {
 
 static BOUNDARY_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// 秘密情報の中にはまず現れない行。まとめて解決した出力を区切るのに使う。
+/// A line that practically never appears in a secret. Separates the values in the batched output.
 fn boundary() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -72,8 +72,8 @@ impl SecretResolver for OnePassword {
         if references.is_empty() {
             return Ok(Vec::new());
         }
-        // 参照はテンプレートに貼り付けるので、プレースホルダーを閉じたり
-        // 改行したりできる文字を含んでいてはいけない。
+        // References are pasted into the template, so they must not contain characters
+        // that could close the placeholder or start a new line.
         if let Some(bad) = references
             .iter()
             .find(|r| !is_reference(r) || r.contains(['{', '}', '\n', '\r']))
@@ -81,8 +81,8 @@ impl SecretResolver for OnePassword {
             return Err(SecretError::InvalidReference(bad.clone()));
         }
 
-        // すべての参照を 1 回の `op inject` で解決する。ロック解除の確認が、
-        // 秘密情報ごとではなく 1 回で済む。
+        // Resolve all references in one `op inject`, so the unlock prompt appears
+        // once instead of once per secret.
         let boundary = boundary();
         let separator = format!("\n{boundary}\n");
         let template: String = references.iter().map(|r| format!("{{{{ {r} }}}}{separator}")).collect();
@@ -98,9 +98,9 @@ impl SecretResolver for OnePassword {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(unavailable)?;
-        // 書き込みの成否にかかわらず終了を待つ。待たないと子プロセスがゾンビになる。また、
-        // CLI がテンプレートを読まずに終了した場合の書き込みエラーより、CLI 自身の
-        // エラーメッセージの方が原因を表している。
+        // Wait for exit whether or not the write succeeded. Otherwise the child becomes a zombie. Also,
+        // if the CLI exits without reading the template, its own error message explains the cause
+        // better than the write error does.
         let written = child
             .stdin
             .take()
@@ -119,7 +119,7 @@ impl SecretResolver for OnePassword {
         if values.len() != references.len() + 1 || values.pop().is_some_and(|rest| !rest.is_empty()) {
             return Err(SecretError::UnexpectedOutput);
         }
-        // 置き換えられずに残ったプレースホルダーを、秘密情報として返してはいけない。
+        // A placeholder left unreplaced must not be returned as a secret.
         if values
             .iter()
             .zip(references)
@@ -136,7 +136,7 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
-    /// `op` の代役を作る。渡したスクリプト本体のとおりに `op inject` として振る舞う。
+    /// Creates a stand-in for `op` that behaves as `op inject` according to the given script body.
     fn fake_op(dir: &Path, body: &str) -> OnePassword {
         let path = dir.join("op");
         std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
@@ -144,7 +144,7 @@ mod tests {
         OnePassword::new(path)
     }
 
-    /// `{{ op://a/b/c }}` を `secret(a/b/c)` に置き換える。本物の CLI が値に置き換えるのと同じ。
+    /// Replaces `{{ op://a/b/c }}` with `secret(a/b/c)`, as the real CLI replaces it with the value.
     const INJECT: &str = r#"[ "$1" = inject ] || exit 64
 sed -E 's#\{\{ op://([^}]*) \}\}#secret(\1)#g'"#;
 
@@ -172,7 +172,7 @@ sed -E 's#\{\{ op://([^}]*) \}\}#secret(\1)#g'"#;
 
     #[test]
     fn multi_line_secret_is_returned_whole() {
-        // Arrange: 秘密鍵は複数行になる。
+        // Arrange: private keys span several lines.
         let dir = tempfile::tempdir().unwrap();
         let op = fake_op(
             dir.path(),
@@ -189,7 +189,7 @@ sed -E 's#\{\{ op://([^}]*) \}\}#secret(\1)#g'"#;
 
     #[test]
     fn no_references_means_no_call() {
-        // Arrange: このプログラムは存在しないので、呼び出せば失敗する。
+        // Arrange: this program does not exist, so calling it fails.
         let op = OnePassword::new("/nonexistent/op");
 
         // Act
@@ -223,7 +223,7 @@ sed -E 's#\{\{ op://([^}]*) \}\}#secret(\1)#g'"#;
     fn cli_failure_reports_its_message() {
         // Arrange
         let dir = tempfile::tempdir().unwrap();
-        // テンプレートを読まずに終了する。書き込みがエラーになっても、報告するのは CLI の文言。
+        // Exits without reading the template. Even if the write fails, the CLI's message is reported.
         let op = fake_op(dir.path(), "echo '[ERROR] item not found' >&2\nexit 1");
 
         // Act
@@ -247,7 +247,7 @@ sed -E 's#\{\{ op://([^}]*) \}\}#secret(\1)#g'"#;
 
     #[test]
     fn output_that_lost_the_boundaries_is_refused() {
-        // Arrange: 別の内容を出力する CLI の結果を、秘密情報として受け取ってはいけない。
+        // Arrange: output from a CLI that prints something else must not be accepted as secrets.
         let dir = tempfile::tempdir().unwrap();
         let op = fake_op(dir.path(), "cat > /dev/null\necho unrelated");
 
@@ -260,7 +260,7 @@ sed -E 's#\{\{ op://([^}]*) \}\}#secret(\1)#g'"#;
 
     #[test]
     fn placeholder_that_was_not_substituted_is_not_returned_as_a_secret() {
-        // Arrange: テンプレートをそのまま返す CLI。
+        // Arrange: a CLI that echoes the template back.
         let dir = tempfile::tempdir().unwrap();
         let op = fake_op(dir.path(), "cat");
 

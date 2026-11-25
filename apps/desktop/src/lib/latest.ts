@@ -1,14 +1,15 @@
 /**
- * 続けて出した要求のうち、最後に出したものの結果だけを採用する。
+ * Of requests issued in succession, use only the result of the last one.
  *
- * 検索は 1 文字ごとに走り、応答は出した順に返るとは限らない。古い応答で新しい結果を上書きしない。
+ * A search runs on every keystroke, and responses may arrive out of order.
+ * Never overwrite a newer result with an older one.
  */
 export function latestOnly<T>(apply: (value: T) => void) {
   let latest = 0;
   let settled: Promise<void> = Promise.resolve();
 
   return {
-    /** 要求を出す。これ以前に出した要求の結果は捨てる。 */
+    /** Issues a request. Results of earlier requests are discarded. */
     start(request: Promise<T>): Promise<void> {
       const id = ++latest;
       settled = request.then(
@@ -17,13 +18,13 @@ export function latestOnly<T>(apply: (value: T) => void) {
             apply(value);
           }
         },
-        // 失敗した要求は結果を持たない。呼び出し元が要求そのものを待って扱う。
+        // A failed request has no result. The caller handles it by awaiting the request itself.
         () => {},
       );
       return settled;
     },
 
-    /** 出してある要求がすべて片付くまで待つ。待っている間に出た要求も待つ。 */
+    /** Waits until all issued requests settle, including those issued while waiting. */
     async settled(): Promise<void> {
       let seen: Promise<void>;
       do {

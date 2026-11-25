@@ -1,7 +1,7 @@
-//! スパイク: Tauri 2 (OS の WebView) で作る最小のランチャー窓。
+//! Spike: a minimal launcher window built with Tauri 2 (the OS WebView).
 //!
-//! `spike-tauri-launcher`                 窓を開く。人が IME を試すためのもの (Esc で終了)。
-//! `spike-tauri-launcher --bench out.json` 自分で計測して終了する。
+//! `spike-tauri-launcher`                 Opens the window, for a person to try the IME (Esc quits).
+//! `spike-tauri-launcher --bench out.json` Measures itself and exits.
 
 use serde::Serialize;
 use spike_common::{self as common, ms, us, Item, Report, Searcher};
@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, State};
 
-/// ページに出す行数の上限。実際のランチャーも短い一覧をスクロールさせる。
+/// Maximum number of rows sent to the page. The real launcher also scrolls a short list.
 const VISIBLE_ROWS: usize = 50;
 
 enum PageEvent {
@@ -84,7 +84,7 @@ fn quit(app: AppHandle) {
     app.exit(0);
 }
 
-/// `pick` が受け付けるイベントを待つ。タイムアウトしたら `None`。壊れた 1 手順で計測全体が止まらないようにするため。
+/// Waits for an event that `pick` accepts. `None` on timeout, so one broken step does not stall the whole run.
 fn wait_for<T>(events: &Receiver<PageEvent>, timeout: Duration, pick: impl Fn(PageEvent) -> Option<T>) -> Option<T> {
     let deadline = Instant::now() + timeout;
     loop {
@@ -95,7 +95,7 @@ fn wait_for<T>(events: &Receiver<PageEvent>, timeout: Duration, pick: impl Fn(Pa
     }
 }
 
-/// 窓を表示し、ページがフレームを描き終えるまでの時間を返す。
+/// Shows the window and returns the time until the page has finished drawing a frame.
 fn show_and_wait(app: &AppHandle, events: &Receiver<PageEvent>, seq: u32, since: Instant) -> Option<f64> {
     let window = app.get_webview_window("main")?;
     window.show().ok()?;
@@ -170,7 +170,7 @@ fn run_bench(app: AppHandle, events: Receiver<PageEvent>, process_start: Instant
         .push("self_footprint_kb excludes the WebView helper processes; see the runner's process table".into());
     report.phase = "idle".into();
     report.write(&out);
-    // ランナースクリプトは、phase が "idle" の間にプロセスの一覧を取る。
+    // The runner script takes the process list while phase is "idle".
     std::thread::sleep(Duration::from_secs(4));
     report.phase = "done".into();
     report.write(&out);

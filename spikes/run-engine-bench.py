@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""2 つのエンジンのスパイクをベンチマークモードで実行し、比較を出力する。
+"""Run the two engine spikes in benchmark mode and print a comparison.
 
-通常のターミナルから実行すること。アプリは画面を必要とし、このスクリプトは `ps` を
-必要とする。各アプリは自分で計測して JSON を書く。このスクリプトは、アプリの実行中だけ
-存在するヘルパープロセスのメモリを足す (OS の WebView はアプリ本体とは別プロセスで動く)。
+Run this from a normal terminal: the apps need a screen and this script needs `ps`.
+Each app measures itself and writes JSON. This script adds the memory of the helper
+processes that exist only while the app runs (the OS WebView runs in processes separate
+from the app itself).
 
-    python3 spikes/run-engine-bench.py            # 両方のエンジン
-    python3 spikes/run-engine-bench.py tauri      # 片方だけ
+    python3 spikes/run-engine-bench.py            # both engines
+    python3 spikes/run-engine-bench.py tauri      # one engine only
 """
 
 import json
@@ -27,7 +28,7 @@ IDLE_TIMEOUT_SECONDS = 180
 
 
 def process_table():
-    """全ユーザーの全プロセスについて、pid -> (rss_kb, コマンド) を返す。"""
+    """Return pid -> (rss_kb, command) for every process of every user."""
     out = subprocess.run(["ps", "-axo", "pid=,rss=,comm="], capture_output=True, text=True, check=True).stdout
     table = {}
     for line in out.splitlines():
@@ -38,7 +39,7 @@ def process_table():
 
 
 def footprint_kb(pid):
-    """vmmap から physical footprint を取る。プロセスを調べられなければ None。"""
+    """Read the physical footprint from vmmap. None if the process cannot be inspected."""
     try:
         out = subprocess.run(["vmmap", "--summary", str(pid)], capture_output=True, text=True, timeout=30).stdout
     except (OSError, subprocess.TimeoutExpired):
@@ -81,8 +82,8 @@ def run(engine):
     processes = []
     if reached_idle:
         after = process_table()
-        # WebKit はヘルパーを launchd 経由で起動するので、アプリの子プロセスにならない。
-        # 起動後に現れた WebKit 関連のプロセスを、このアプリのものとして数える。
+        # WebKit starts its helpers through launchd, so they are not children of the app.
+        # Count the WebKit processes that appeared after launch as belonging to this app.
         for pid, (rss, command) in sorted(after.items()):
             is_app = pid == child.pid
             is_new_helper = pid not in before and "WebKit" in command
@@ -93,7 +94,7 @@ def run(engine):
     try:
         child.wait(timeout=60)
     except subprocess.TimeoutExpired:
-        # 終わらないアプリを残すと、ウインドウが画面に残り、次のエンジンの計測も始まらない。
+        # An app left running keeps its window on screen and blocks the next engine's run.
         child.kill()
         child.wait()
 

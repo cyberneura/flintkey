@@ -1,4 +1,4 @@
-//! 窓に依存しないアプリの状態。設定フォルダを読み、検索し、実行の計画を立てる。
+//! App state that does not depend on the window. Reads the config folder, searches, and plans runs.
 
 use flintkey_core::launch::{self, Machine, Plan};
 use flintkey_core::search::Searcher;
@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 const SETTINGS_FILE: &str = "settings.yaml";
 
-/// 一覧の 1 行。
+/// One row of the list.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Row {
     pub id: String,
@@ -20,7 +20,7 @@ pub struct Row {
     pub hotkey: Option<String>,
     /// `url` / `app` / `script` / `terminal`。
     pub kind: &'static str,
-    /// 何が起きるかを 1 行で示す文字列 (URL、アプリ名、コマンド)。
+    /// One line describing what happens (URL, app name, command).
     pub detail: String,
 }
 
@@ -61,8 +61,8 @@ impl Session {
         &self.settings
     }
 
-    /// `settings.yaml` を読み直す。読めない場合は、最後に読めた設定を使い続ける
-    /// (書き間違えた瞬間にホットキーが既定値へ変わると、直す手段を失う)。
+    /// Reloads `settings.yaml`. If it cannot be read, keeps the last good settings
+    /// (if a typo reset the hotkey to the default, the user would lose the way to fix it).
     pub fn reload_settings(&mut self) {
         self.settings_problems.clear();
         match self.store.load_settings() {
@@ -75,7 +75,7 @@ impl Session {
         }
     }
 
-    /// `commands/*.yaml` と使用回数を読み直す。
+    /// Reloads `commands/*.yaml` and the usage counts.
     pub fn reload_commands(&mut self) {
         self.command_problems.clear();
         self.usage = Usage::load(&self.usage_path);
@@ -108,7 +108,7 @@ impl Session {
         }
     }
 
-    /// 設定ファイルの問題。設定、コマンドの順。
+    /// Problems in the config files. Settings first, then commands.
     pub fn problems(&self) -> Vec<String> {
         self.settings_problems
             .iter()
@@ -117,7 +117,7 @@ impl Session {
             .collect()
     }
 
-    /// `query` に一致するコマンドを、良く一致した順に返す。
+    /// Returns the commands matching `query`, best match first.
     pub fn search(&mut self, query: &str) -> Vec<Row> {
         self.searcher
             .rank(&self.commands, &self.usage, query)
@@ -126,7 +126,7 @@ impl Session {
             .collect()
     }
 
-    /// ホットキーを持つコマンドの (id, ホットキー)。id の順。
+    /// (id, hotkey) of the commands that have a hotkey, in id order.
     pub fn hotkeys(&self) -> Vec<(String, String)> {
         self.commands
             .iter()
@@ -134,7 +134,7 @@ impl Session {
             .collect()
     }
 
-    /// `id` のコマンドを実行する計画を立てる。秘密情報には触れない。
+    /// Plans how to run command `id`. Does not touch secrets.
     pub fn plan(&self, id: &str, shell: Option<&str>, path: Option<&str>) -> Result<Plan, String> {
         let stored = self
             .commands
@@ -151,7 +151,7 @@ impl Session {
         launch::plan(&stored.command.action, &machine).map_err(|error| error.to_string())
     }
 
-    /// `id` を 1 回使ったと記録する。他のプロセスが書いた分を失わないよう、ファイルを読み直してから書く。
+    /// Records one use of `id`. Rereads the file before writing so counts written by other processes are not lost.
     pub fn record_use(&mut self, id: &str) -> std::io::Result<()> {
         self.usage = Usage::load(&self.usage_path);
         self.usage.record(id);
@@ -432,7 +432,7 @@ mod tests {
 
     #[test]
     fn plan_reports_a_terminal_setting_that_this_os_does_not_have() {
-        // Arrange: Windows Terminal を選んだ設定を macOS で使う。設定を無視すると Terminal.app で通ってしまう。
+        // Arrange: settings choosing Windows Terminal, used on macOS. Ignoring them would quietly use Terminal.app.
         let fixture = Fixture::new();
         fixture.command("logs", "title: Logs\ntype: terminal\nrun: tail -f log\n");
         fixture.settings("terminal:\n  app: windows-terminal\n");
