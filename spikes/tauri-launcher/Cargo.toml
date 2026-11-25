@@ -1,0 +1,19 @@
+[package]
+name = "spike-tauri-launcher"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "=2.12.6", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+spike-common = { path = "../common" }
+
+[features]
+# Tauri CLI を使わないと誰もこれを有効にせず、アプリが開発サーバーを探しに行ってしまう。
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

@@ -1,0 +1,3 @@
+target/
+spikes/tauri-launcher/gen/
+.DS_Store

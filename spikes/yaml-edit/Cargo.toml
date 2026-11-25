@@ -1,0 +1,10 @@
+[package]
+name = "spike-yaml-edit"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+yaml-edit = "0.3.6"
+serde_json = "1"
+serde-saphyr = "=2.1.1"
