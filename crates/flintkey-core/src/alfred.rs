@@ -557,8 +557,9 @@ fn convert_action(object: &Object) -> Result<Converted, String> {
             refuse_arguments(source)?;
             let language = object.config.get("type").and_then(Value::as_u64).unwrap_or(u64::MAX);
             let run = match language {
-                // zsh。Flintkey はスクリプトをログインシェルで実行する。
-                5 | 11 => source.to_string(),
+                // zsh。Flintkey はスクリプトを利用者のログインシェルで実行するので、zsh 以外のシェルの
+                // 利用者でも zsh で動くように明示する。
+                5 | 11 => heredoc("/bin/zsh", source),
                 0 => heredoc("/bin/bash", source),
                 6 => heredoc("osascript", source),
                 7 => heredoc("osascript -l JavaScript", source),
@@ -571,7 +572,14 @@ fn convert_action(object: &Object) -> Result<Converted, String> {
         "action.applescript" => {
             let source = config_text(object, "applescript");
             refuse_arguments(source)?;
-            let mut converted = mac(script(heredoc("osascript", source)));
+            // Alfred はこのアクションのコードを `on alfred_script(q)` ハンドラとして書かせ、自分で呼ぶ。
+            // osascript はハンドラを定義するだけで呼ばないので、呼び出しを足す。
+            let body = if source.to_lowercase().contains("on alfred_script(") {
+                format!("{}\nalfred_script(\"\")\n", source.trim_end())
+            } else {
+                source.to_string()
+            };
+            let mut converted = mac(script(heredoc("osascript", &body)));
             converted.warnings = secret_warnings(source);
             converted
         }
@@ -1136,12 +1144,25 @@ mod tests {
                     "action.applescript",
                     json!({ "applescript": "tell application \"Finder\" to activate" }),
                 ),
+                keyword("h", "handler", "Handler"),
+                object(
+                    "ah",
+                    "action.applescript",
+                    json!({ "applescript": "on alfred_script(q)\n  beep\nend alfred_script" }),
+                ),
                 keyword("t", "term", "Terminal"),
                 object("tc", "action.terminalcommand", json!({ "script": "ssh host" })),
                 keyword("p", "php", "PHP"),
                 object("ph", "action.script", json!({ "script": "<?php echo 1;", "type": 1 })),
             ],
-            &[("z", "zs"), ("j", "js"), ("a", "ap"), ("t", "tc"), ("p", "ph")],
+            &[
+                ("z", "zs"),
+                ("j", "js"),
+                ("a", "ap"),
+                ("h", "ah"),
+                ("t", "tc"),
+                ("p", "ph"),
+            ],
         )];
 
         // Act
@@ -1152,7 +1173,7 @@ mod tests {
         assert_eq!(
             by_id("zsh").command.action,
             Action::Script {
-                run: "source ~/.env\nopen \"x://y\"".into(),
+                run: "/bin/zsh <<'FLINTKEY_SCRIPT'\nsource ~/.env\nopen \"x://y\"\nFLINTKEY_SCRIPT\n".into(),
                 cwd: None,
                 env: BTreeMap::new()
             }
@@ -1174,6 +1195,14 @@ mod tests {
             by_id("as").command.action,
             Action::Script {
                 run: "osascript <<'FLINTKEY_SCRIPT'\ntell application \"Finder\" to activate\nFLINTKEY_SCRIPT\n".into(),
+                cwd: None,
+                env: BTreeMap::new()
+            }
+        );
+        assert_eq!(
+            by_id("handler").command.action,
+            Action::Script {
+                run: "osascript <<'FLINTKEY_SCRIPT'\non alfred_script(q)\n  beep\nend alfred_script\nalfred_script(\"\")\nFLINTKEY_SCRIPT\n".into(),
                 cwd: None,
                 env: BTreeMap::new()
             }

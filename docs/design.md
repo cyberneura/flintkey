@@ -399,8 +399,7 @@ flintkey import-alfred --from <Alfred.alfredpreferences>
 | Open URL | `type: url`。ブラウザを指定していれば `open -b <バンドル ID> <URL>` の `type: script` |
 | Launch Apps / Files (1 つ) | アプリ (`.app`) なら `type: app`。フォルダや書類なら `open <パス>` の `type: script` |
 | Open File (フォルダ) | `open <パス>` の `type: script` |
-| Run Script (zsh) | `type: script` (そのまま。Flintkey はログインシェルで実行する) |
-| Run Script (bash / AppleScript / JavaScript)、Run NSAppleScript | インタプリタにヒアドキュメントで渡す `type: script` |
+| Run Script (zsh / bash / AppleScript / JavaScript)、Run NSAppleScript | 元のインタプリタ (`/bin/zsh` など) にヒアドキュメントで渡す `type: script` |
 | Terminal Command | `type: terminal` |
 | Browse in Terminal | `cd <パス>` の `type: terminal` |
 
@@ -413,8 +412,9 @@ flintkey import-alfred --from <Alfred.alfredpreferences>
   Alfred のワークフローを無効にする必要がある。両方が持っているときにどちらが反応するかは確かめていない。
 - スクリプトが `token`、`password`、`.env` などに触れていれば、Git で共有する前に確かめるよう一覧で注意を出す。
 - ワークフローが変数を持っていれば、スクリプトにその変数が渡らない旨の注意を出す (変数は移さない。秘密情報を含みうるため)。
-- 変換したスクリプトは、zsh か bash のようなヒアドキュメントを読めるシェルを前提にしている。
-  Flintkey はスクリプトをログインシェル (`$SHELL`) で実行するので、fish ではヒアドキュメントの部分が動かない。
+- 変換したスクリプトは、ヒアドキュメントを読めるシェル (zsh、bash) を前提にしている。
+  Flintkey は `run` をログインシェル (`$SHELL`) に渡すので、fish ではヒアドキュメントの部分が動かない。
+- Run NSAppleScript のコードは Alfred が呼ぶ `on alfred_script(q)` ハンドラなので、末尾にその呼び出しを足す。
 - Launch Apps / Files の「前面にあれば隠す」(toggle) は移せない。注意を出し、前面に出すだけのコマンドにする。
 
 変換しないもの (理由を付けて一覧に出す):
