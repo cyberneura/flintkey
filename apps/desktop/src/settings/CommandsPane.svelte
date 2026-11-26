@@ -424,7 +424,7 @@
                 class="{input} h-20 font-mono"
                 spellcheck="false"
                 bind:value={argsText}
-                oninput={() => (form.args = argsFromText(argsText))}
+                oninput={(event) => (form.args = argsFromText(event.currentTarget.value))}
               ></textarea>
             </label>
           {:else}

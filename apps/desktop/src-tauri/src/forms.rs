@@ -96,19 +96,16 @@ impl CommandForm {
     /// The command the form describes. Rules the core checks (empty title, URL without a scheme, …) are left
     /// to the save, which reports them with the rest; only what cannot be expressed as a command is refused here.
     pub fn to_command(&self) -> Result<Command, String> {
-        let text = |value: &str| value.trim().to_string();
-        let optional = |value: &str| Some(value.trim().to_string()).filter(|value| !value.is_empty());
+        // Values are kept as typed: a path or URL may have meaningful spaces at either end, and trimming would change
+        // a command the user did not edit. Only entries that are entirely blank count as "nothing typed".
+        let optional = |value: &str| Some(value.to_string()).filter(|value| !value.trim().is_empty());
         let list = |items: &[String]| -> Vec<String> {
-            items
-                .iter()
-                .map(|item| item.trim().to_string())
-                .filter(|item| !item.is_empty())
-                .collect()
+            items.iter().filter(|item| !item.trim().is_empty()).cloned().collect()
         };
         let action = match self.kind.as_str() {
-            "url" => Action::Url { url: text(&self.url) },
+            "url" => Action::Url { url: self.url.clone() },
             "app" => Action::App {
-                app: text(&self.app),
+                app: self.app.clone(),
                 // Arguments are kept exactly: an empty or repeated argument can be meaningful.
                 args: self.args.clone(),
             },
@@ -143,7 +140,7 @@ impl CommandForm {
             os.insert(Os::from_name(name).ok_or_else(|| format!("unknown os `{name}`"))?);
         }
         Ok(Command {
-            title: text(&self.title),
+            title: self.title.clone(),
             keywords: list(&self.keywords),
             hotkey: optional(&self.hotkey),
             pin: self.pin,
@@ -181,16 +178,17 @@ mod tests {
     }
 
     #[test]
-    fn blank_entries_typed_in_the_form_are_dropped_and_text_is_trimmed() {
-        // Arrange
+    fn blank_entries_are_dropped_but_typed_values_are_kept_as_they_are() {
+        // Arrange: a path with a meaningful trailing space must survive an unrelated save.
         let form = CommandForm {
-            title: "  Site ".into(),
-            keywords: vec!["s".into(), " ".into(), " site ".into()],
+            title: "Build".into(),
+            keywords: vec!["b".into(), " ".into(), " build ".into()],
             hotkey: "  ".into(),
-            kind: "url".into(),
-            url: " https://example.com ".into(),
-            tags: vec!["".into(), "web".into()],
-            run: "kept for when the type changes".into(),
+            kind: "script".into(),
+            run: "make".into(),
+            cwd: "/tmp/build ".into(),
+            tags: vec!["".into(), "work".into()],
+            url: "kept for when the type changes".into(),
             ..CommandForm::default()
         };
 
@@ -198,14 +196,15 @@ mod tests {
         let command = form.to_command().unwrap();
 
         // Assert
-        assert_eq!(command.title, "Site");
-        assert_eq!(command.keywords, ["s", "site"]);
+        assert_eq!(command.keywords, ["b", " build "]);
         assert_eq!(command.hotkey, None);
-        assert_eq!(command.tags, ["web"]);
+        assert_eq!(command.tags, ["work"]);
         assert_eq!(
             command.action,
-            Action::Url {
-                url: "https://example.com".into()
+            Action::Script {
+                run: "make".into(),
+                cwd: Some("/tmp/build ".into()),
+                env: BTreeMap::new()
             }
         );
     }
