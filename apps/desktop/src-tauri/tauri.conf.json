@@ -29,6 +29,19 @@
         "skipTaskbar": true,
         "visibleOnAllWorkspaces": true,
         "acceptFirstMouse": true
+      },
+      {
+        "label": "settings",
+        "title": "Flintkey Settings",
+        "url": "settings.html",
+        "theme": "Dark",
+        "width": 980,
+        "height": 700,
+        "minWidth": 760,
+        "minHeight": 480,
+        "visible": false,
+        "center": true,
+        "backgroundColor": "#18181b"
       }
     ],
     "security": {

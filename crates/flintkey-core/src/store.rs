@@ -138,6 +138,20 @@ impl Store {
     /// Saves a command edited in the form. In an existing file, everything unrelated to the change
     /// is kept as is.
     pub fn save_command(&self, id: &str, command: &Command) -> Result<Saved, StoreError> {
+        let (path, text, saved) = self.prepare_command(id, command)?;
+        if saved != Saved::Unchanged {
+            write_atomically(&path, &text)?;
+        }
+        Ok(saved)
+    }
+
+    /// The text [`Store::save_command`] would write, without writing it. For showing the YAML of a form
+    /// that has not been saved yet.
+    pub fn preview_command(&self, id: &str, command: &Command) -> Result<String, StoreError> {
+        Ok(self.prepare_command(id, command)?.1)
+    }
+
+    fn prepare_command(&self, id: &str, command: &Command) -> Result<(PathBuf, String, Saved), StoreError> {
         let path = self.command_path(id)?;
         let (text, saved) = match std::fs::read_to_string(&path) {
             Ok(source) => {
@@ -167,10 +181,7 @@ impl Store {
             }
             Err(problems) => return Err(StoreError::Invalid(problems)),
         }
-        if saved != Saved::Unchanged {
-            write_atomically(&path, &text)?;
-        }
-        Ok(saved)
+        Ok((path, text, saved))
     }
 
     /// Saves a command edited as raw YAML. Text that is not a valid command is rejected,
@@ -188,6 +199,59 @@ impl Store {
             Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error.into()),
             _ => Ok(()),
         }
+    }
+
+    /// Saves settings edited in a form. Like [`Store::save_command`], only keys whose meaning changed are
+    /// rewritten, and the text is read back before writing.
+    pub fn save_settings(&self, settings: &Settings) -> Result<Saved, StoreError> {
+        let path = self.root.join(SETTINGS_FILE);
+        let (text, saved) = match std::fs::read_to_string(&path) {
+            Ok(source) => {
+                let updated = document::update_settings(&source, settings);
+                let saved = if updated.text == source {
+                    Saved::Unchanged
+                } else if updated.kept_formatting {
+                    Saved::Edited
+                } else {
+                    Saved::Rewritten
+                };
+                (updated.text, saved)
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                (document::render_settings(settings), Saved::Created)
+            }
+            Err(error) => return Err(error.into()),
+        };
+        match parse_settings(&text) {
+            Ok(written) if written == *settings => {}
+            Ok(_) => {
+                return Err(StoreError::Invalid(vec![Diagnostic::file(
+                    "the settings would not read back unchanged from settings.yaml",
+                )]));
+            }
+            Err(problems) => return Err(StoreError::Invalid(problems)),
+        }
+        if saved != Saved::Unchanged {
+            std::fs::create_dir_all(&self.root)?;
+            write_atomically(&path, &text)?;
+        }
+        Ok(saved)
+    }
+
+    /// The raw text of `settings.yaml`, for the settings UI. Empty if the file does not exist.
+    pub fn read_settings_source(&self) -> io::Result<String> {
+        match std::fs::read_to_string(self.root.join(SETTINGS_FILE)) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(String::new()),
+            result => result,
+        }
+    }
+
+    /// Saves `settings.yaml` edited as raw YAML. Text that is not valid settings is refused.
+    pub fn save_settings_source(&self, source: &str) -> Result<Settings, StoreError> {
+        let settings = parse_settings(source).map_err(StoreError::Invalid)?;
+        std::fs::create_dir_all(&self.root)?;
+        write_atomically(&self.root.join(SETTINGS_FILE), source)?;
+        Ok(settings)
     }
 
     /// Reads `settings.yaml`. Defaults if the file is missing.
@@ -382,6 +446,28 @@ mod tests {
     }
 
     #[test]
+    fn preview_shows_the_text_a_save_would_write_without_writing_it() {
+        // Arrange
+        let (_dir, store) = store();
+        let source = "# mine\ntitle: GitHub\ntype: url\nurl: https://github.com\n";
+        write(&store, "commands/gh.yaml", source);
+
+        // Act
+        let preview = store
+            .preview_command("gh", &url_command("GitHub", "https://github.com/pulls"))
+            .unwrap();
+        let invalid = store.preview_command("gh", &url_command("", "https://github.com"));
+
+        // Assert
+        assert_eq!(
+            preview,
+            "# mine\ntitle: GitHub\ntype: url\nurl: https://github.com/pulls\n"
+        );
+        assert_eq!(store.read_command_source("gh").unwrap(), source);
+        assert!(matches!(invalid, Err(StoreError::Invalid(_))), "{invalid:?}");
+    }
+
+    #[test]
     fn saving_a_changed_command_edits_the_file_in_place() {
         // Arrange
         let (_dir, store) = store();
@@ -548,6 +634,87 @@ mod tests {
             assert_eq!(saved, Saved::Created, "id {id:?}");
         }
         assert_eq!(store.load_commands().unwrap().commands.len(), 4);
+    }
+
+    #[test]
+    fn settings_saved_from_a_form_keep_comments_and_change_one_line() {
+        // Arrange
+        let (_dir, store) = store();
+        let source = "# my machine\nhotkey: alt+space   # the launcher\nwindow:\n  display: cursor\n";
+        write(&store, "settings.yaml", source);
+        let mut settings = store.load_settings().unwrap().unwrap();
+        settings.hotkey = "shift+ctrl+space".into();
+
+        // Act
+        let saved = store.save_settings(&settings).unwrap();
+
+        // Assert
+        assert_eq!(saved, Saved::Edited);
+        assert_eq!(
+            store.read_settings_source().unwrap(),
+            "# my machine\nhotkey: shift+ctrl+space   # the launcher\nwindow:\n  display: cursor\n"
+        );
+    }
+
+    #[test]
+    fn settings_without_a_file_are_created_with_every_key() {
+        // Arrange
+        let (_dir, store) = store();
+        let settings = Settings {
+            hotkey: "cmd+space".into(),
+            display: Display::Primary,
+            terminal: Some(crate::launch::TerminalApp::Terminal),
+        };
+
+        // Act
+        let saved = store.save_settings(&settings).unwrap();
+
+        // Assert
+        assert_eq!(saved, Saved::Created);
+        assert_eq!(
+            store.read_settings_source().unwrap(),
+            "hotkey: cmd+space\nwindow:\n  display: primary\nterminal:\n  app: terminal\n"
+        );
+        assert_eq!(store.load_settings().unwrap(), Ok(settings));
+    }
+
+    #[test]
+    fn settings_keys_missing_from_the_file_are_added_and_unchanged_settings_are_not_written() {
+        // Arrange: the file only sets the hotkey; `window` is at its default.
+        let (_dir, store) = store();
+        write(&store, "settings.yaml", "hotkey: alt+space\n");
+        let unchanged = store.load_settings().unwrap().unwrap();
+        let mut moved = unchanged.clone();
+        moved.display = Display::Primary;
+        moved.terminal = Some(crate::launch::TerminalApp::WindowsTerminal);
+
+        // Act
+        let first = store.save_settings(&unchanged).unwrap();
+        let second = store.save_settings(&moved).unwrap();
+
+        // Assert
+        assert_eq!(first, Saved::Unchanged);
+        assert_eq!(second, Saved::Edited);
+        assert_eq!(store.load_settings().unwrap(), Ok(moved));
+        assert!(store.read_settings_source().unwrap().starts_with("hotkey: alt+space\n"));
+    }
+
+    #[test]
+    fn broken_settings_file_is_rewritten_and_raw_settings_are_validated() {
+        // Arrange
+        let (_dir, store) = store();
+        write(&store, "settings.yaml", "window:\n  display: sideways\n");
+
+        // Act
+        let saved = store.save_settings(&Settings::default()).unwrap();
+        let refused = store.save_settings_source("hotkey: [not, text]\n");
+        let accepted = store.save_settings_source("# raw\nhotkey: ctrl+alt+k\n").unwrap();
+
+        // Assert
+        assert_eq!(saved, Saved::Rewritten);
+        assert!(matches!(refused, Err(StoreError::Invalid(_))), "{refused:?}");
+        assert_eq!(accepted.hotkey, "ctrl+alt+k");
+        assert_eq!(store.read_settings_source().unwrap(), "# raw\nhotkey: ctrl+alt+k\n");
     }
 
     #[test]

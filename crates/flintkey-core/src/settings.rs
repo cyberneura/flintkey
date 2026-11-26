@@ -26,6 +26,21 @@ pub enum Display {
     Primary,
 }
 
+impl Display {
+    pub const ALL: [Display; 2] = [Display::Cursor, Display::Primary];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Display::Cursor => "cursor",
+            Display::Primary => "primary",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Display> {
+        Display::ALL.into_iter().find(|display| display.name() == name)
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -78,12 +93,11 @@ pub fn parse_settings(source: &str) -> Result<Settings, Vec<Diagnostic>> {
         }
     }
     if let Some(display) = raw.window.and_then(|window| window.display) {
-        match display.value.as_str() {
-            "cursor" => settings.display = Display::Cursor,
-            "primary" => settings.display = Display::Primary,
-            other => problems.push(problem_at(
+        match Display::from_name(&display.value) {
+            Some(found) => settings.display = found,
+            None => problems.push(problem_at(
                 &display,
-                format!("unknown display `{other}` (expected one of: cursor, primary)"),
+                format!("unknown display `{}` (expected one of: cursor, primary)", display.value),
             )),
         }
     }

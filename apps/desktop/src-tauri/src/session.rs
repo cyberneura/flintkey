@@ -53,6 +53,14 @@ impl Session {
         }
     }
 
+    pub fn store(&self) -> &Store {
+        &self.store
+    }
+
+    pub fn os(&self) -> Os {
+        self.os
+    }
+
     pub fn config_dir(&self) -> &Path {
         self.store.root()
     }

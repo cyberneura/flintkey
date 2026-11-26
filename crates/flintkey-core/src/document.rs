@@ -1,10 +1,11 @@
-//! Turns a [`Command`] back into YAML text.
+//! Turns a [`Command`] or [`Settings`] back into YAML text.
 //!
 //! New files are written in a fixed format. Existing files are edited in place, rewriting only
 //! keys whose meaning changed. Hand-written comments, blank lines and quoting survive, and
 //! changing one setting gives a one-line Git diff.
 
 use crate::command::{Action, Command, TYPE_KEYS, parse_command};
+use crate::settings::{Settings, parse_settings};
 use serde::Serialize;
 use serde::ser::{SerializeMap, Serializer};
 use std::collections::BTreeMap;
@@ -120,6 +121,61 @@ pub struct Updated {
     /// Happens when the original text was not a valid command, or when the in-place edit
     /// did not produce the requested command.
     pub kept_formatting: bool,
+}
+
+/// The keys of `settings.yaml`. Unlike commands, every key is written, so a new file shows what can be set.
+fn settings_fields(settings: &Settings) -> Fields {
+    let mut out: Fields = vec![
+        ("hotkey", Node::Text(settings.hotkey.clone())),
+        (
+            "window",
+            Node::Table(vec![("display", Node::Text(settings.display.name().to_string()))]),
+        ),
+    ];
+    if let Some(app) = settings.terminal {
+        out.push((
+            "terminal",
+            Node::Table(vec![("app", Node::Text(app.name().to_string()))]),
+        ));
+    }
+    out
+}
+
+/// Text of a new `settings.yaml`.
+pub(crate) fn render_settings(settings: &Settings) -> String {
+    let mut options = serde_saphyr::SerializerOptions::default();
+    options.compact_list_indent = false;
+    serde_saphyr::to_string_with_options(&Ordered(&settings_fields(settings)), options)
+        .expect("settings always serialize")
+}
+
+/// Applies `settings` to the existing text of `settings.yaml`, like [`update`] does for commands.
+pub(crate) fn update_settings(source: &str, settings: &Settings) -> Updated {
+    let rewrite = || Updated {
+        text: render_settings(settings),
+        kept_formatting: false,
+    };
+    let Ok(current) = parse_settings(source) else {
+        return rewrite();
+    };
+    if current == *settings {
+        return Updated {
+            text: source.to_string(),
+            kept_formatting: true,
+        };
+    }
+    let edited = Document::from_str(source).ok().and_then(|document| {
+        let root = document.as_mapping()?;
+        apply(&root, &settings_fields(&current), &settings_fields(settings))?;
+        Some(document.to_string())
+    });
+    match edited {
+        Some(text) if parse_settings(&text).as_ref() == Ok(settings) => Updated {
+            text,
+            kept_formatting: true,
+        },
+        _ => rewrite(),
+    }
 }
 
 /// Applies `command` to the text of an existing file.

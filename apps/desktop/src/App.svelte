@@ -92,6 +92,8 @@
       runSelected();
     } else if (intent === 'hide') {
       invoke('hide');
+    } else if (intent === 'settings') {
+      invoke('open_settings');
     } else {
       selected = moveSelection(selected, rows.length, intent === 'next' ? 1 : -1);
     }

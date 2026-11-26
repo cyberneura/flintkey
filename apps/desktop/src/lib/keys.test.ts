@@ -15,6 +15,8 @@ describe('intentFor', () => {
     ['Tab', { shiftKey: true }, 'previous'],
     ['n', { ctrlKey: true }, 'next'],
     ['p', { ctrlKey: true }, 'previous'],
+    [',', { metaKey: true }, 'settings'],
+    [',', { ctrlKey: true }, 'settings'],
   ] as const)('%s %o means %s', (name, overrides, expected) => {
     // Arrange
     const input = key(name, overrides);
@@ -26,7 +28,7 @@ describe('intentFor', () => {
     expect(intent).toBe(expected);
   });
 
-  it.each(['n', 'p', 'a', ' ', 'Backspace', 'ArrowLeft'])('leaves a plain %j to the input field', (name) => {
+  it.each(['n', 'p', 'a', ' ', ',', 'Backspace', 'ArrowLeft'])('leaves a plain %j to the input field', (name) => {
     expect(intentFor(key(name))).toBeNull();
   });
 

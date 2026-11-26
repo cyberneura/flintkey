@@ -22,8 +22,15 @@ pub(crate) fn write_atomically(path: &Path, text: &str) -> io::Result<()> {
     ));
     // Create only, so an existing file or a symlink target is never overwritten.
     let mut file = OpenOptions::new().write(true).create_new(true).open(&temporary)?;
+    // The new file would get the default permissions. Keep those of the file it replaces, so a file the user made
+    // private (it may hold commands with secrets) does not become readable by others.
+    let permissions = std::fs::metadata(path).ok().map(|metadata| metadata.permissions());
     let replaced = file
         .write_all(text.as_bytes())
+        .and_then(|()| match permissions {
+            Some(permissions) => file.set_permissions(permissions),
+            None => Ok(()),
+        })
         .and_then(|()| std::fs::rename(&temporary, path));
     if replaced.is_err() {
         let _ = std::fs::remove_file(&temporary);
@@ -42,6 +49,25 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replacing_a_private_file_keeps_it_private() {
+        use std::os::unix::fs::PermissionsExt;
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("secret.yaml");
+        std::fs::write(&path, "old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        // Act
+        write_atomically(&path, "new").unwrap();
+
+        // Assert
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
     }
 
     #[test]

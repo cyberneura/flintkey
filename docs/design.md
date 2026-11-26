@@ -12,7 +12,7 @@ the configuration is kept as files, can be shared across machines with Git, and 
 | Per-command hotkeys | Implemented |
 | Migration from Alfred (`import-alfred` in the CLI) | Implemented |
 | Widgets (above the launcher window) | Not implemented |
-| Settings UI | Not implemented |
+| Settings window (general settings, launcher hotkey, commands) | Implemented |
 | Plugin system, development-starter plugin | Not implemented |
 
 Not yet confirmed on real hardware:
@@ -81,7 +81,7 @@ Weaknesses that come from choosing Tauri:
 ### Background process
 
 - Stays resident with an icon in the menu bar on macOS and in the task tray on Windows. On macOS it does not appear in the Dock or the app switcher.
-- Tray menu: Show Flintkey / Open Config Folder / Quit Flintkey.
+- Tray menu: Show Flintkey / Settings… / Open Config Folder / Quit Flintkey.
   On Windows, left-clicking the icon shows the window and right-clicking shows the menu.
 - Pressing the `hotkey` in `settings.yaml` shows the window. Pressing it while the window is shown hides it.
 - Pressing a command file's `hotkey` runs that command without showing the window.
@@ -150,8 +150,9 @@ The configuration folder is not watched. It is reloaded each time the window is 
 
 - `settings.yaml`: just before showing the window.
 - `commands/*.yaml` and usage counts: just after showing the window (with several hundred commands, it would affect the time until the window appears).
-- Hotkeys (both the launcher's and the commands'): registered again at startup and just after the commands are reloaded.
-  This means that after changing a hotkey, the new hotkey does not work until the window has been shown once.
+- Hotkeys (both the launcher's and the commands'): registered again at startup, just after the commands are reloaded,
+  and after every save in the settings window. After changing a hotkey by editing a file, the new hotkey does not
+  work until the window has been shown once.
   If the launcher's hotkey was changed, show the window with the old hotkey or from the tray menu.
 
 When hotkeys overlap, the launcher's takes priority, and between commands the one that comes first by id is used.
@@ -438,12 +439,66 @@ Plugins will be external processes (any language, a crash does not stop the main
 - The development-starter feature (pick a project in `~/workspace` and open it in an editor or on GitHub) is
   shipped as one of these plugins, not as a built-in feature.
 
-## Settings UI (planned)
+## Settings window
 
-- A command list on the left (searchable) and a form on the right. The raw YAML is shown next to the form,
-  and editing either one updates the other.
-- Validation on save, with errors shown with line numbers.
-- "Test run" to try a command on the spot.
-- Hotkeys are recorded by pressing them.
-- Buttons to open the file in Finder / an editor.
-- Watch the configuration folder for changes and reload automatically (so `git pull` and manual edits take effect immediately).
+Opened from the tray menu (Settings…) or with ⌘, (Ctrl+, elsewhere) in the launcher. Everything it changes is written
+to the YAML files through `Store`, so hand-written comments and formatting survive (see "Saving"). A file can also be
+edited as raw YAML in the same window; text that is not valid is refused and nothing is written.
+
+On macOS the app normally stays out of the Dock and the app switcher. While the settings window is open it behaves
+like a regular app (Dock icon, ⌘Tab), so the window can be found again and receives keyboard input. Closing it (the
+close button or ⌘W) hides it and returns to the background mode.
+
+The window is dark from the first paint: its background color is set in `tauri.conf.json`, and `settings.html` sets
+it inline before any stylesheet loads.
+
+### General
+
+- Launcher hotkey, display (`cursor` / `primary`) and terminal app.
+- Saving registers the hotkeys again at once; a hotkey that cannot be registered is shown as a problem.
+
+### Hotkey picker
+
+Used for the launcher hotkey and for command hotkeys.
+
+- Modifier buttons (Control, Option/Alt, Shift, Command/Win) and a key menu, so every hotkey can be set with the mouse.
+- Record: press the combination instead. It reads the physical key (`KeyboardEvent.code`), so Option or a non-US
+  layout does not change the key. A hotkey that is already registered (by Flintkey or another app) never reaches the
+  window, so it cannot be recorded; pick it with the buttons.
+- While choosing, the hotkey is checked:
+  - Error: it cannot be read, or it has no modifier (only F keys may be used alone).
+  - Warning: another command or the launcher has it, or macOS uses it for one of its own shortcuts. The macOS
+    shortcuts checked are Spotlight (⌘Space), Finder search (⌥⌘Space) and input source switching (⌃Space, ⌃⌥Space).
+    They are read from `~/Library/Preferences/com.apple.symbolichotkeys.plist`; a shortcut missing from that file
+    has its default and is enabled. The warning links to System Settings → Keyboard.
+  - Whether Flintkey or macOS receives a hotkey that both have has not been checked.
+
+### Commands
+
+- A list of every command file, for every OS, including broken files (which open as raw YAML so they can be fixed).
+  Filter by text and by tag.
+- A form for the selected command. Every field of every action type is kept while editing, so switching the type
+  does not lose what was typed; only the fields of the chosen type are saved.
+- Form / YAML views. Switching to YAML shows exactly the text that saving the form would write; switching back reads
+  the YAML into the form.
+- New: the file name (id) defaults to the title in lowercase with hyphens. An id that is already taken is refused,
+  so a new command never overwrites a file.
+- Try runs the saved command once without counting it as a use. Show in Finder reveals the file. Delete asks for a
+  second click.
+
+Protecting the files:
+
+- A save sends the file text the window loaded. If the file changed since (an editor, `git pull`), the save is
+  refused instead of putting the window's old values back. Revert / Reload loads the file again.
+- If `settings.yaml` cannot be read, General opens it as YAML, and the form cannot be saved: the form would show the
+  last settings that could be read, not what the file says.
+- Switching from YAML to the form is refused while the YAML has unsaved edits, because the form cannot hold
+  comments or layout typed there.
+- Reloading when the window is shown again keeps unsaved edits.
+- Saving keeps the file's permissions (a private file stays private).
+- A command hotkey without a modifier is refused when saving, not only shown as an error.
+
+Limitations:
+
+- The configuration folder is not watched. The window reloads the files each time it is shown, not while it is open.
+- Renaming a command (its file) is not supported in the window.

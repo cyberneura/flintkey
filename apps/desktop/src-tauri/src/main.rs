@@ -3,11 +3,13 @@
 // Do not open a console window on Windows in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod forms;
 mod hotkeys;
 #[cfg(target_os = "macos")]
 mod panel;
 mod placement;
 mod session;
+mod settings_ui;
 mod showing;
 
 use flintkey_core::Os;
@@ -29,11 +31,13 @@ use tauri::{
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 const LAUNCHER: &str = "launcher";
+const SETTINGS: &str = "settings";
 /// Same as the window size in `tauri.conf.json` (logical size).
 const WINDOW_SIZE: (f64, f64) = (720.0, 480.0);
 
 const EVENT_SHOWN: &str = "launcher-shown";
 const EVENT_HIDDEN: &str = "launcher-hidden";
+const EVENT_SETTINGS_SHOWN: &str = "settings-shown";
 
 struct AppState {
     session: Mutex<Session>,
@@ -374,17 +378,50 @@ fn open_config_folder(app: &AppHandle) {
     }
 }
 
+/// Shows the settings window. Can be called from any thread.
+///
+/// On macOS the app normally stays out of the Dock and the app switcher. While the settings window is open it
+/// behaves like a regular app, so the window can be found again with ⌘Tab and gets keyboard input.
+fn show_settings(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        hide_launcher(&handle);
+        let Some(window) = handle.get_webview_window(SETTINGS) else {
+            return;
+        };
+        #[cfg(target_os = "macos")]
+        let _ = handle.set_activation_policy(tauri::ActivationPolicy::Regular);
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = window.emit(EVENT_SETTINGS_SHOWN, ());
+    });
+}
+
+fn hide_settings(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(SETTINGS) {
+        let _ = window.hide();
+    }
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+}
+
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Show Flintkey", true, None::<&str>)?;
+    let settings = MenuItem::with_id(app, "settings", "Settings\u{2026}", true, None::<&str>)?;
     let config = MenuItem::with_id(app, "config", "Open Config Folder", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Flintkey", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &config, &PredefinedMenuItem::separator(app)?, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[&show, &settings, &config, &PredefinedMenuItem::separator(app)?, &quit],
+    )?;
 
     let tray = TrayIconBuilder::with_id("main")
         .tooltip("Flintkey")
         .menu(&menu)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => show_launcher(app, Focus::Take),
+            "settings" => show_settings(app),
             "config" => open_config_folder(app),
             "quit" => app.exit(0),
             _ => {}
@@ -448,7 +485,27 @@ fn main() {
                 .build(),
         )
         .manage(state)
-        .invoke_handler(tauri::generate_handler![open_session, search, run, hide])
+        .invoke_handler(tauri::generate_handler![
+            open_session,
+            search,
+            run,
+            hide,
+            settings_ui::settings_page,
+            settings_ui::settings_save,
+            settings_ui::settings_save_source,
+            settings_ui::hotkey_check,
+            settings_ui::commands_list,
+            settings_ui::command_page,
+            settings_ui::command_preview,
+            settings_ui::command_parse,
+            settings_ui::command_save,
+            settings_ui::command_save_source,
+            settings_ui::command_delete,
+            settings_ui::command_try,
+            settings_ui::reveal,
+            settings_ui::open_keyboard_settings,
+            settings_ui::open_settings,
+        ])
         .setup(|app| {
             // Keep the app out of the Dock and the app switcher.
             #[cfg(target_os = "macos")]
@@ -471,6 +528,12 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| match event {
+            WindowEvent::CloseRequested { api, .. } if window.label() == SETTINGS => {
+                api.prevent_close();
+                hide_settings(window.app_handle());
+            }
+            // Everything below is about the launcher.
+            _ if window.label() != LAUNCHER => {}
             WindowEvent::Focused(true) => {
                 let has_key = holds_key_now(window, true);
                 window.state::<AppState>().has_key.store(has_key, Ordering::SeqCst);
