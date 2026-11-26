@@ -16,9 +16,10 @@ const LAUNCHPAD: &str = "/System/Applications/Launchpad.app";
 const APPS: &str = "/System/Applications/Apps.app";
 
 /// Restart and log out go through the login window, which asks for confirmation (with its usual countdown) and
-/// lets apps save their documents. No permission is needed to send it these events.
+/// lets apps save their documents. These are the events that ask first: `rrst` (kAEShowRestartDialog) and `logo`
+/// (kAELogOut). Not `rlgo` (kAEReallyLogOut) or `rest` (kAERestart), which act at once.
 const RESTART: &str = "/usr/bin/osascript -e 'tell application \"loginwindow\" to «event aevtrrst»'";
-const LOG_OUT: &str = "/usr/bin/osascript -e 'tell application \"loginwindow\" to «event aevtrlgo»'";
+const LOG_OUT: &str = "/usr/bin/osascript -e 'tell application \"loginwindow\" to «event aevtlogo»'";
 /// Turns the display off, which locks the screen when "Require password after the screen saver begins or display
 /// is turned off" is set to Immediately (the default). It needs no permission, unlike sending ⌃⌘Q.
 const LOCK: &str = "/usr/bin/pmset displaysleepnow";
@@ -89,6 +90,13 @@ mod tests {
             Action::App { app, .. } => app.clone(),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn restart_and_log_out_use_the_events_that_ask_for_confirmation() {
+        // Act / Assert
+        assert!(RESTART.contains("«event aevtrrst»"));
+        assert!(LOG_OUT.contains("«event aevtlogo»"));
     }
 
     #[test]
