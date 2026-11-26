@@ -85,9 +85,10 @@ impl Icons {
             IconRef::Url { url } => cached(&self.cache_dir, &format!("url:{url}"), || {
                 download(url, MAX_BYTES).filter(|bytes| is_image(bytes))
             }),
-            IconRef::Favicon { url } => cached(&self.cache_dir, &format!("favicon:{}", without_fragment(url)), || {
-                site_icon(url)
-            }),
+            IconRef::Favicon { url } => {
+                let root = favicon::site_root(url)?;
+                cached(&self.cache_dir, &format!("favicon:{root}"), || site_icon(&root))
+            }
         }
     }
 
@@ -102,10 +103,6 @@ impl Icons {
         }
         std::fs::read(path).ok().filter(|bytes| is_image(bytes))
     }
-}
-
-fn without_fragment(url: &str) -> &str {
-    url.split('#').next().unwrap_or(url)
 }
 
 /// The image kept for `key` in `dir`, fetched again with `fetch` when missing or older than [`REFRESH_AFTER`]. A
@@ -143,10 +140,11 @@ fn cache_name(key: &str) -> String {
     format!("{hash:016x}.img")
 }
 
-/// The icon of the site of `page_url`: the icons its HTML declares, best first, then `/favicon.ico`.
-fn site_icon(page_url: &str) -> Option<Vec<u8>> {
-    let html = download(page_url, MAX_BYTES).map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
-    favicon::candidates(html.as_deref().unwrap_or(""), page_url)
+/// The icon of the site of `url`: the icons its root page declares, best first, then `/favicon.ico`.
+fn site_icon(url: &str) -> Option<Vec<u8>> {
+    let root = favicon::site_root(url)?;
+    let html = download(&root, MAX_BYTES).map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+    favicon::candidates(html.as_deref().unwrap_or(""), &root)
         .iter()
         .find_map(|url| download(url, MAX_BYTES).filter(|bytes| is_image(bytes)))
 }

@@ -1,6 +1,48 @@
 //! Finding a site's icon from its page: the `<link rel="icon">` family in the HTML, then `/favicon.ico`.
 
-use url::Url;
+use std::net::IpAddr;
+use url::{Host, Url};
+
+/// The page to read a site's icons from: the root of the origin of `url`, without credentials, path or query. The
+/// command's own URL is never requested, since opening it may do something (a sign-out link, a form action).
+pub fn site_root(url: &str) -> Option<String> {
+    let url = Url::parse(url).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = url.host_str()?;
+    let port = url.port().map(|port| format!(":{port}")).unwrap_or_default();
+    Some(format!("{}://{host}{port}/", url.scheme()))
+}
+
+/// Whether an icon URL found in a page may be fetched: one on the page's own host, or one that is not an address
+/// on this machine or the local network. A page may not use its icon links to make the app send requests to such
+/// addresses on its behalf. (A host name that resolves to one is not caught here.)
+fn may_follow(candidate: &Url, page: &Url) -> bool {
+    if candidate.host() == page.host() {
+        return true;
+    }
+    match candidate.host() {
+        Some(Host::Domain(domain)) => {
+            let domain = domain.to_ascii_lowercase();
+            domain != "localhost" && !domain.ends_with(".localhost") && !domain.ends_with(".local")
+        }
+        Some(Host::Ipv4(ip)) => public(IpAddr::V4(ip)),
+        Some(Host::Ipv6(ip)) => public(IpAddr::V6(ip)),
+        None => false,
+    }
+}
+
+fn public(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => !(ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified()),
+        IpAddr::V6(ip) => {
+            let first = ip.segments()[0];
+            // Unique local (fc00::/7) and link-local (fe80::/10).
+            !(ip.is_loopback() || ip.is_unspecified() || first & 0xfe00 == 0xfc00 || first & 0xffc0 == 0xfe80)
+        }
+    }
+}
 
 /// The icon URLs to try for the page at `page_url` whose HTML is `html`, best first. Larger and scalable icons come
 /// first, since the launcher shows them at 32 points on high-density screens. `/favicon.ico` of the page's origin is
@@ -24,7 +66,7 @@ pub fn candidates(html: &str, page_url: &str) -> Vec<String> {
             continue;
         }
         let Ok(url) = base.join(&href) else { continue };
-        if !matches!(url.scheme(), "http" | "https") {
+        if !matches!(url.scheme(), "http" | "https") || !may_follow(&url, &page) {
             continue;
         }
         let svg = url.path().to_ascii_lowercase().ends_with(".svg")
@@ -187,6 +229,46 @@ mod tests {
             ["http://intranet.local:8080/favicon.ico"]
         );
         assert!(candidates("", "not a url").is_empty());
+    }
+
+    #[test]
+    fn the_site_root_is_read_never_the_command_url() {
+        // Act / Assert
+        assert_eq!(
+            site_root("https://user:secret@example.com:8443/account/logout?next=/#x").as_deref(),
+            Some("https://example.com:8443/")
+        );
+        assert_eq!(
+            site_root("http://intranet.local/a").as_deref(),
+            Some("http://intranet.local/")
+        );
+        assert_eq!(site_root("file:///etc/passwd"), None);
+    }
+
+    #[test]
+    fn icon_links_to_local_addresses_on_another_host_are_not_followed() {
+        // Arrange
+        let html = r#"<link rel="icon" href="http://127.0.0.1:8080/admin.png">
+            <link rel="icon" href="http://192.168.1.1/x.png">
+            <link rel="icon" href="http://[::1]/x.png">
+            <link rel="icon" href="http://localhost/x.png">
+            <link rel="icon" href="http://printer.local/x.png">
+            <link rel="icon" href="https://cdn.example.net/ok.png">"#;
+
+        // Act
+        let public_page = candidates(html, "https://example.com/");
+        let local_page = candidates(r#"<link rel="icon" href="/own.png">"#, "http://192.168.1.10/");
+
+        // Assert
+        assert_eq!(
+            public_page,
+            ["https://cdn.example.net/ok.png", "https://example.com/favicon.ico"]
+        );
+        // A local site's own icons are fine.
+        assert_eq!(
+            local_page,
+            ["http://192.168.1.10/own.png", "http://192.168.1.10/favicon.ico"]
+        );
     }
 
     #[test]

@@ -318,8 +318,9 @@ impl Session {
             icons.extend(resolve(own, format!("commands/{}.yaml", stored.id)));
         }
         match &command.action {
-            Action::Url { url } if url.starts_with("https://") || url.starts_with("http://") => {
-                icons.push(IconRef::Favicon { url: url.clone() });
+            // Only the site's root is ever requested for it (see `favicon::site_root`).
+            Action::Url { url } => {
+                icons.extend(flintkey_core::favicon::site_root(url).map(|root| IconRef::Favicon { url: root }))
             }
             Action::App { app, .. } => {
                 icons.extend(apps::find(&self.apps, app, &self.home).map(|installed| IconRef::App {
@@ -480,7 +481,7 @@ mod tests {
                 kind: "url",
                 detail: "https://example.com".into(),
                 icons: vec![IconRef::Favicon {
-                    url: "https://example.com".into()
+                    url: "https://example.com/".into()
                 }],
             }
         );
@@ -657,7 +658,7 @@ mod tests {
                     url: "https://example.com/star.png".into()
                 },
                 IconRef::Favicon {
-                    url: "https://example.com/a".into()
+                    url: "https://example.com/".into()
                 },
                 IconRef::File {
                     path: briefcase.clone()

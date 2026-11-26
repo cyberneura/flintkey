@@ -450,9 +450,12 @@ error page, for example) counts as not loading.
 Loading:
 
 - App icons are drawn by the system (`NSWorkspace`), so icons kept in an asset catalog work.
-- Favicons: the page is fetched, the `<link rel="icon">` / `apple-touch-icon` it declares are tried, scalable and
-  larger first, then `/favicon.ico` of its origin. A favicon is looked up only when its row is shown. This sends a
-  request to the site of every `type: url` command that appears in the list.
+- Favicons: the root page of the site (`scheme://host:port/`) is fetched, never the command's own URL (opening it
+  may do something, such as signing out). The `<link rel="icon">` / `apple-touch-icon` it declares are tried,
+  scalable and larger first, then `/favicon.ico`. An icon link to another host that is `localhost`, `*.local` or a
+  loopback, private or link-local address is not followed, so a page cannot make the app send requests into the
+  local network. A favicon is looked up only when its row is shown; this sends a request to the site of every
+  `type: url` command that appears in the list.
 - Images from the web (favicons and `https://` icons) are fetched with `curl` (5 second limit) and kept in
   `icon-cache/` in the state folder. They are fetched again after 7 days; until that succeeds the old one is shown.
 - A picture that does not load is not tried again for 5 minutes. Changing a file in the configuration folder
