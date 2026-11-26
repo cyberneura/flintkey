@@ -1108,7 +1108,7 @@ dependencies = [
 
 [[package]]
 name = "flintkey-core"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "nucleo-matcher",
  "open",
@@ -1123,7 +1123,7 @@ dependencies = [
 
 [[package]]
 name = "flintkey-desktop"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "flintkey-core",
  "notify",
