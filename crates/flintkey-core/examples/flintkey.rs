@@ -54,7 +54,7 @@ fn run(args: &[&str]) -> Result<(), String> {
             let active: Vec<_> = loaded
                 .commands
                 .into_iter()
-                .filter(|c| c.command.applies_to(Os::current()))
+                .filter(|c| c.command.enabled && c.command.applies_to(Os::current()))
                 .collect();
             let order = Searcher::default().rank(&active, &Usage::load(&usage_path), &query.join(" "));
             for index in order {

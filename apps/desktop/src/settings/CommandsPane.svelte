@@ -242,6 +242,19 @@
     }
   }
 
+  /** Turns a command on or off from the list. Not for the open command while it has unsaved edits. */
+  async function setEnabled(command: CommandSummary, enabled: boolean) {
+    try {
+      await api.commandSetEnabled(command.id, enabled);
+      await loadList();
+      if (command.id === selectedId && !dirty) {
+        open(command.id, true);
+      }
+    } catch (error) {
+      listProblems = problemsOf(error);
+    }
+  }
+
   async function tryIt() {
     if (!selectedId) return;
     status = '';
@@ -320,24 +333,43 @@
     <Problems problems={listProblems} />
     <ul class="min-h-0 flex-1 overflow-y-auto rounded-md border border-zinc-800" role="listbox">
       {#each shown as command (command.id)}
-        <li role="option" aria-selected={command.id === selectedId}>
+        <li
+          role="option"
+          aria-selected={command.id === selectedId}
+          class="flex items-center hover:bg-zinc-800 {command.id === selectedId ? 'bg-amber-500/20' : ''}"
+        >
           <button
             type="button"
             data-annotate="commands-item-{command.id}"
-            class="flex w-full flex-col items-start gap-0.5 px-3 py-1.5 hover:bg-zinc-800 {command.id === selectedId
-              ? 'bg-amber-500/20'
-              : ''}"
+            class="flex min-w-0 flex-1 flex-col items-start gap-0.5 py-1.5 pl-3 {command.enabled ? '' : 'opacity-50'}"
             onclick={() => select(command.id)}
           >
             <span class="flex w-full items-center gap-2">
               <span class="truncate text-sm {command.broken ? 'text-red-300' : 'text-zinc-100'}">{command.title}</span>
               {#if command.broken}<span class="shrink-0 text-xs text-red-400">broken</span>{/if}
+              {#if !command.enabled}<span class="shrink-0 text-xs text-zinc-400">off</span>{/if}
             </span>
             <span class="flex w-full items-center justify-between gap-2 text-xs text-zinc-500">
               <span class="truncate">{command.id}</span>
               {#if command.hotkey}<span class="shrink-0 font-mono">{command.hotkey}</span>{/if}
             </span>
           </button>
+          {#if !command.broken}
+            <input
+              type="checkbox"
+              data-annotate="commands-enabled-{command.id}"
+              class="mx-3 shrink-0 accent-amber-500"
+              title={command.id === selectedId && dirty
+                ? 'Save or revert this command first'
+                : command.enabled
+                  ? 'Enabled; uncheck to turn it off without deleting it'
+                  : 'Off; check to turn it on'}
+              aria-label="Enabled"
+              checked={command.enabled}
+              disabled={command.id === selectedId && dirty}
+              onchange={(event) => setEnabled(command, event.currentTarget.checked)}
+            />
+          {/if}
         </li>
       {/each}
     </ul>
@@ -418,6 +450,14 @@
           <label class="flex flex-col gap-1">
             <span class={label}>Title</span>
             <input data-annotate="command-title" class={input} bind:value={form.title} />
+          </label>
+
+          <label class="flex items-center gap-2 text-sm text-zinc-300">
+            <input type="checkbox" data-annotate="command-enabled" bind:checked={form.enabled} />
+            Enabled
+            <span class="text-xs text-zinc-500">
+              (when off, the command stays in its file but is not listed in the launcher and its hotkey is not registered)
+            </span>
           </label>
 
           <div class="flex flex-col gap-1">

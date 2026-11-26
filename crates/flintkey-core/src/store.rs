@@ -273,6 +273,7 @@ mod tests {
     fn url_command(title: &str, url: &str) -> Command {
         Command {
             title: title.into(),
+            enabled: true,
             keywords: vec![],
             hotkey: None,
             pin: false,

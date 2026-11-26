@@ -23,6 +23,7 @@ export interface HotkeyCheck {
 
 export interface CommandForm {
   title: string;
+  enabled: boolean;
   keywords: string[];
   hotkey: string;
   kind: string;
@@ -45,6 +46,7 @@ export interface CommandSummary {
   hotkey: string | null;
   tags: string[];
   os: string[];
+  enabled: boolean;
   broken: boolean;
 }
 
@@ -57,6 +59,7 @@ export interface CommandPage {
 
 export const emptyCommand = (): CommandForm => ({
   title: '',
+  enabled: true,
   keywords: [],
   hotkey: '',
   kind: 'url',
@@ -97,6 +100,7 @@ export const api = {
   commandSaveSource: (id: string, source: string, base: string | null) =>
     invoke<CommandPage>('command_save_source', { id, source, base }),
   commandDelete: (id: string) => invoke<void>('command_delete', { id }),
+  commandSetEnabled: (id: string, enabled: boolean) => invoke<void>('command_set_enabled', { id, enabled }),
   commandTry: (id: string) => invoke<void>('command_try', { id }),
   reveal: (id: string | null) => invoke<void>('reveal', { id }),
   openKeyboardSettings: () => invoke<void>('open_keyboard_settings'),
