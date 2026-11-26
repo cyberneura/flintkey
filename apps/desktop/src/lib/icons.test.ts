@@ -24,6 +24,33 @@ describe('iconLoader', () => {
     expect(settled).toEqual([iconKey(app('/Applications/A.app')), iconKey(app('/Applications/B.app'))]);
   });
 
+  it('asks again for a failed icon only after retryFailed', async () => {
+    // Arrange
+    let online = false;
+    const fetchImage = vi.fn(async (_icon: IconRef) => {
+      if (!online) throw new Error('offline');
+      return new Uint8Array([0x89, 0x50]).buffer;
+    });
+    const states: IconState[] = [];
+    const loader = iconLoader(fetchImage, (_key, state) => states.push(state));
+    loader.load([app('/Applications/A.app')]);
+    await flush();
+
+    // Act
+    online = true;
+    loader.load([app('/Applications/A.app')]);
+    await flush();
+    const retried = loader.retryFailed();
+    loader.load([app('/Applications/A.app')]);
+    await flush();
+
+    // Assert
+    expect(retried).toEqual([iconKey(app('/Applications/A.app'))]);
+    expect(fetchImage).toHaveBeenCalledTimes(2);
+    expect(states[0]).toBe('failed');
+    expect(states[1]).not.toBe('failed');
+  });
+
   it('reports a failed icon once and does not ask for it again', async () => {
     // Arrange
     const fetchImage = vi.fn(async (_icon: IconRef): Promise<ArrayBuffer> => {

@@ -24,8 +24,14 @@ const REFRESH_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const RETRY_AFTER: Duration = Duration::from_secs(5 * 60);
 
 enum Loaded {
-    Image(Vec<u8>),
+    Image(Vec<u8>, Instant),
     Missing(Instant),
+}
+
+/// Whether an image held in memory for `icon` since `when` can still be used. An image from the web is held only
+/// briefly, so the age check of the copy on disk (and the refresh after an offline period) gets its turn.
+fn still_good(icon: &IconRef, when: Instant) -> bool {
+    !matches!(icon, IconRef::Url { .. } | IconRef::Favicon { .. }) || when.elapsed() < RETRY_AFTER
 }
 
 pub struct Icons {
@@ -53,13 +59,13 @@ impl Icons {
     /// call it off the main thread.
     pub fn image(&self, icon: &IconRef) -> Option<Vec<u8>> {
         match self.loaded.lock().unwrap().get(icon) {
-            Some(Loaded::Image(bytes)) => return Some(bytes.clone()),
+            Some(Loaded::Image(bytes, when)) if still_good(icon, *when) => return Some(bytes.clone()),
             Some(Loaded::Missing(when)) if when.elapsed() < RETRY_AFTER => return None,
             _ => {}
         }
         let image = self.load(icon);
         let entry = match &image {
-            Some(bytes) => Loaded::Image(bytes.clone()),
+            Some(bytes) => Loaded::Image(bytes.clone(), Instant::now()),
             None => Loaded::Missing(Instant::now()),
         };
         self.loaded.lock().unwrap().insert(icon.clone(), entry);
@@ -70,7 +76,7 @@ impl Icons {
     /// changed: a file may have been replaced, or an icon value fixed. Images from the web stay (they are on disk).
     pub fn forget_local(&self) {
         self.loaded.lock().unwrap().retain(|icon, loaded| {
-            matches!(icon, IconRef::Url { .. } | IconRef::Favicon { .. }) && matches!(loaded, Loaded::Image(_))
+            matches!(icon, IconRef::Url { .. } | IconRef::Favicon { .. }) && matches!(loaded, Loaded::Image(..))
         });
     }
 

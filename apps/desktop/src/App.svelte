@@ -145,6 +145,9 @@
     const unlisten = [
       listen<number>('launcher-shown', (event) => {
         showing = event.payload;
+        // Icons that failed while hidden (offline, for instance) get another chance; the row keeps its type icon
+        // until they load.
+        for (const key of icons.retryFailed()) delete iconStates[key];
         openSession();
       }),
       // The list read after this showing began, or after the files changed on disk, is ready. A hidden window

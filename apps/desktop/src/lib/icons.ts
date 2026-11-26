@@ -17,19 +17,29 @@ export function mimeOf(bytes: Uint8Array): string {
 }
 
 /**
- * Fetches each icon once, including while its first request is still on its way. An icon that fails is not asked
- * for again (the app retries on its side after a while; the page is reloaded with the window).
+ * Fetches each icon once, including while its first request is still on its way. An icon that failed is asked for
+ * again only after `retryFailed` (each time the window is shown; the app itself does not retry for a few minutes).
  */
 export function iconLoader(
   fetchImage: (icon: IconRef) => Promise<ArrayBuffer>,
   onSettled: (key: string, state: IconState) => void,
 ) {
   const asked = new Set<string>();
+  const failed = new Set<string>();
 
   return {
     /** Asks again for every icon from now on, after the configuration changed. */
     reset() {
       asked.clear();
+      failed.clear();
+    },
+
+    /** Lets the icons that failed be asked for again (the network may be back). Returns their keys. */
+    retryFailed(): string[] {
+      const keys = [...failed];
+      keys.forEach((key) => asked.delete(key));
+      failed.clear();
+      return keys;
     },
 
     load(icons: Iterable<IconRef>) {
@@ -42,7 +52,10 @@ export function iconLoader(
             const bytes = new Uint8Array(buffer);
             onSettled(key, URL.createObjectURL(new Blob([bytes], { type: mimeOf(bytes) })));
           },
-          () => onSettled(key, 'failed'),
+          () => {
+            failed.add(key);
+            onSettled(key, 'failed');
+          },
         );
       }
     },
