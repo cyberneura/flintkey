@@ -44,12 +44,17 @@ pub struct Session {
     apps: Vec<InstalledApp>,
     /// `commands`, then the installed apps no command already opens. What is searched and run.
     entries: Vec<StoredCommand>,
+    /// The number of the last reading started, and of the last one applied. Readings run on other threads and can
+    /// finish out of order; one started before the applied one read older files and is dropped.
+    readings_started: u64,
+    reading_applied: u64,
     usage: Usage,
     searcher: Searcher,
 }
 
 /// Reads the commands, usage counts and apps from disk. Built by [`Session::reading`].
 pub struct Reading {
+    number: u64,
     store: Store,
     usage_path: PathBuf,
     app_folders: Vec<PathBuf>,
@@ -57,6 +62,7 @@ pub struct Reading {
 
 /// What [`Reading::read`] found, for [`Session::apply`].
 pub struct Read {
+    number: u64,
     commands: std::io::Result<LoadedCommands>,
     usage: Usage,
     apps: Vec<InstalledApp>,
@@ -66,6 +72,7 @@ impl Reading {
     /// Apps are found by their file name; the folders are read, not Spotlight.
     pub fn read(&self) -> Read {
         Read {
+            number: self.number,
             commands: self.store.load_commands(),
             usage: Usage::load(&self.usage_path),
             apps: apps::scan(&self.app_folders),
@@ -92,6 +99,8 @@ impl Session {
             app_folders,
             apps: Vec::new(),
             entries: Vec::new(),
+            readings_started: 0,
+            reading_applied: 0,
             usage: Usage::default(),
             searcher: Searcher::default(),
         }
@@ -142,16 +151,23 @@ impl Session {
     }
 
     /// What [`Session::reload`] reads, detached from the session so it can be read without holding its lock.
-    pub fn reading(&self) -> Reading {
+    pub fn reading(&mut self) -> Reading {
+        self.readings_started += 1;
         Reading {
+            number: self.readings_started,
             store: Store::new(self.store.root().to_path_buf()),
             usage_path: self.usage_path.clone(),
             app_folders: self.app_folders.clone(),
         }
     }
 
-    /// Takes in what [`Reading::read`] read.
-    pub fn apply(&mut self, read: Read) {
+    /// Takes in what [`Reading::read`] read, unless a reading started later has been applied already. Returns
+    /// whether it was applied.
+    pub fn apply(&mut self, read: Read) -> bool {
+        if read.number < self.reading_applied {
+            return false;
+        }
+        self.reading_applied = read.number;
         self.command_problems.clear();
         self.usage = read.usage;
         self.apps = read.apps;
@@ -183,6 +199,7 @@ impl Session {
             }
         }
         self.rebuild_entries();
+        true
     }
 
     fn rebuild_entries(&mut self) {
@@ -509,6 +526,47 @@ mod tests {
 
         // Assert
         assert!(session.app_folders.is_empty());
+    }
+
+    #[test]
+    fn a_reading_that_finishes_after_a_newer_one_is_dropped() {
+        // Arrange: a reading starts, the file changes, and a second reading starts and is applied first.
+        let fixture = Fixture::new();
+        fixture.command("site", "title: Old title\ntype: url\nurl: https://example.com\n");
+        let mut session = fixture.session(Os::Macos);
+        let older = session.reading().read();
+        fixture.command("site", "title: New title\ntype: url\nurl: https://example.com\n");
+        let newer = session.reading().read();
+
+        // Act
+        let newer_applied = session.apply(newer);
+        let older_applied = session.apply(older);
+
+        // Assert
+        assert!(newer_applied);
+        assert!(!older_applied);
+        assert_eq!(session.search("")[0].title, "New title");
+    }
+
+    #[test]
+    fn a_synchronous_reload_supersedes_readings_still_in_flight() {
+        // Arrange
+        let fixture = Fixture::new();
+        fixture.command("site", "title: Site\ntype: url\nurl: https://example.com\n");
+        let mut session = fixture.session(Os::Macos);
+        let in_flight = session.reading().read();
+        fixture.command(
+            "site",
+            "title: Site\nenabled: false\ntype: url\nurl: https://example.com\n",
+        );
+
+        // Act
+        session.reload();
+        let applied = session.apply(in_flight);
+
+        // Assert
+        assert!(!applied);
+        assert!(session.search("").is_empty());
     }
 
     #[test]

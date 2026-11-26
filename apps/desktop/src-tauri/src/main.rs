@@ -253,14 +253,20 @@ fn reload_in_background(app: &AppHandle, event: &'static str) {
         let state = app.state::<AppState>();
         let reading = state.session.lock().unwrap().reading();
         let read = reading.read();
-        let (launcher, commands) = {
-            let mut session = state.session.lock().unwrap();
-            session.apply(read);
-            (session.settings().hotkey.clone(), session.hotkeys())
-        };
+        // A reading overtaken by a newer one (another reload, or a save in the settings window) is dropped; the
+        // newer one registers the hotkeys. The page still searches again, which answers from the newer list.
+        let applied = state.session.lock().unwrap().apply(read);
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || {
-            register_hotkeys(&handle, &launcher, &commands);
+            if applied {
+                // Registered from the session as it is now, not as it was read: a save may have come in between.
+                let state = handle.state::<AppState>();
+                let (launcher, commands) = {
+                    let session = state.session.lock().unwrap();
+                    (session.settings().hotkey.clone(), session.hotkeys())
+                };
+                register_hotkeys(&handle, &launcher, &commands);
+            }
             let _ = handle.emit(event, ());
         });
     });
