@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#27272a"/><stop offset="1" stop-color="#0f0f11"/></linearGradient>
+    <linearGradient id="star" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fef3c7"/><stop offset="1" stop-color="#f59e0b"/></linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#bg)"/>
+  <!-- stone, behind, centred and large -->
+  <polygon points="170,600 270,300 500,190 760,270 860,540 720,820 340,850" fill="#3f3f46"/>
+  <polygon points="270,300 500,190 520,450 330,500" fill="#71717a"/>
+  <polygon points="500,190 760,270 660,470 520,450" fill="#52525b"/>
+  <polygon points="170,600 270,300 330,500 300,730" fill="#52525b"/>
+  <polygon points="330,500 520,450 660,470 610,700 300,730" fill="#3f3f46"/>
+  <polygon points="660,470 760,270 860,540 720,820 610,700" fill="#27272a"/>
+  <polygon points="300,730 610,700 720,820 340,850" fill="#18181b"/>
+  <!-- star, in front, centred -->
+  <path d="M512 152 C544 440 592 488 880 520 C592 552 544 600 512 888 C480 600 432 552 144 520 C432 488 480 440 512 152 Z" fill="url(#star)" stroke="#18181b" stroke-width="28" stroke-linejoin="round"/>
+</svg>
