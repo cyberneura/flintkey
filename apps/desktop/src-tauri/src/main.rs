@@ -42,6 +42,8 @@ const EVENT_HIDDEN: &str = "launcher-hidden";
 const EVENT_SETTINGS_SHOWN: &str = "settings-shown";
 /// Sent to every window after the configuration files changed on disk and were loaded again.
 const EVENT_CONFIG_CHANGED: &str = "config-changed";
+/// Sent to the launcher once the commands and apps read after it was shown are loaded, so it can search again.
+const EVENT_REFRESHED: &str = "launcher-refreshed";
 
 /// Keeps the configuration folder watched for as long as the app runs.
 struct ConfigWatcher {
@@ -51,12 +53,8 @@ struct ConfigWatcher {
 /// The configuration files changed on disk: load them again, register the hotkeys again, and tell the windows.
 /// Can be called from any thread.
 fn config_changed(app: &AppHandle) {
-    let handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        handle.state::<AppState>().session.lock().unwrap().reload_settings();
-        sync_hotkeys(&handle);
-        let _ = handle.emit(EVENT_CONFIG_CHANGED, ());
-    });
+    app.state::<AppState>().session.lock().unwrap().reload_settings();
+    reload_in_background(app, EVENT_CONFIG_CHANGED);
 }
 
 struct AppState {
@@ -92,34 +90,59 @@ impl Registry {
 #[derive(Serialize)]
 struct View {
     rows: Vec<Row>,
+    /// Failures that happened while the window was hidden. Handed over once.
+    notices: Vec<String>,
     problems: Vec<String>,
     config_dir: String,
     /// The number of the current showing. The page attaches it to run requests.
     showing: u64,
 }
 
-#[tauri::command]
+/// The list and the problems in the configuration, as they are now. Sent again after a reload.
+#[derive(Serialize)]
+struct Refreshed {
+    rows: Vec<Row>,
+    problems: Vec<String>,
+}
+
+// The launcher's commands run off the main thread (`async`): the main thread delivers key presses to the window,
+// and these may wait for the session while a reload holds it.
+
+#[tauri::command(async)]
 fn open_session(state: State<'_, AppState>, query: String) -> View {
-    let mut problems = std::mem::take(&mut *state.notices.lock().unwrap());
-    problems.extend(state.hotkeys.lock().unwrap().problems.iter().cloned());
-    // Commands were already reloaded when the window was shown (`sync_hotkeys`).
-    let mut session = state.session.lock().unwrap();
-    problems.extend(session.problems());
+    let notices = std::mem::take(&mut *state.notices.lock().unwrap());
+    let Refreshed { rows, problems } = refreshed(&state, &query);
     View {
-        rows: session.search(&query),
+        rows,
+        notices,
         problems,
-        config_dir: session.config_dir().display().to_string(),
+        config_dir: state.session.lock().unwrap().config_dir().display().to_string(),
         showing: state.showing.lock().unwrap().id(),
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
+fn refresh(state: State<'_, AppState>, query: String) -> Refreshed {
+    refreshed(&state, &query)
+}
+
+fn refreshed(state: &AppState, query: &str) -> Refreshed {
+    let mut problems = state.hotkeys.lock().unwrap().problems.clone();
+    let mut session = state.session.lock().unwrap();
+    problems.extend(session.problems());
+    Refreshed {
+        rows: session.search(query),
+        problems,
+    }
+}
+
+#[tauri::command(async)]
 fn search(state: State<'_, AppState>, query: String) -> Vec<Row> {
     state.session.lock().unwrap().search(&query)
 }
 
-/// The icon of the app bundle at `path` (a row's `icon`), as PNG bytes. Not async: AppKit draws on the main thread.
-#[tauri::command]
+/// The icon of the app bundle at `path` (a row's `icon`), as PNG bytes.
+#[tauri::command(async)]
 fn app_icon(state: State<'_, AppState>, path: String) -> Result<tauri::ipc::Response, String> {
     if !path.ends_with(".app") {
         return Err(format!("`{path}` is not an app"));
@@ -207,16 +230,52 @@ fn hide(app: AppHandle) {
     hide_launcher(&app);
 }
 
-/// Reloads commands and re-registers the launcher and command hotkeys. Call from the main thread
+/// Reloads commands and re-registers the launcher and command hotkeys before returning. Call from the main thread
 /// (registration waits on the main thread, so calling it from another thread while holding a lock can deadlock).
+/// The launcher uses [`reload_in_background`] instead, so the main thread stays free for key presses.
 fn sync_hotkeys(app: &AppHandle) {
     let state = app.state::<AppState>();
     let (launcher, commands) = {
         let mut session = state.session.lock().unwrap();
-        session.reload_commands();
+        session.reload();
         (session.settings().hotkey.clone(), session.hotkeys())
     };
-    let wanted = hotkeys::wanted(&launcher, &commands);
+    register_hotkeys(app, &launcher, &commands);
+}
+
+/// Reads the commands, usage counts and apps on another thread, then registers the hotkeys on the main thread and
+/// sends `event` to the windows. Can be called from any thread.
+///
+/// The disk is read without holding the session, so searches answer from the previous list meanwhile.
+fn reload_in_background(app: &AppHandle, event: &'static str) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let state = app.state::<AppState>();
+        let reading = state.session.lock().unwrap().reading();
+        let read = reading.read();
+        // A reading overtaken by a newer one (another reload, or a save in the settings window) is dropped; the
+        // newer one registers the hotkeys. The page still searches again, which answers from the newer list.
+        let applied = state.session.lock().unwrap().apply(read);
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if applied {
+                // Registered from the session as it is now, not as it was read: a save may have come in between.
+                let state = handle.state::<AppState>();
+                let (launcher, commands) = {
+                    let session = state.session.lock().unwrap();
+                    (session.settings().hotkey.clone(), session.hotkeys())
+                };
+                register_hotkeys(&handle, &launcher, &commands);
+            }
+            let _ = handle.emit(event, ());
+        });
+    });
+}
+
+/// Call from the main thread without holding the session.
+fn register_hotkeys(app: &AppHandle, launcher: &str, commands: &[(String, String)]) {
+    let state = app.state::<AppState>();
+    let wanted = hotkeys::wanted(launcher, commands);
     let shortcuts = app.global_shortcut();
     let mut registry = state.hotkeys.lock().unwrap();
     registry.problems = hotkeys::apply(
@@ -308,11 +367,9 @@ fn show_launcher_on_main(app: &AppHandle, focus: Focus) {
         if visible { showing.id() } else { showing.begin() }
     };
     let _ = window.emit(EVENT_SHOWN, id);
-    // Reload commands after showing the window (with hundreds of them, it delays the window).
-    // The page asks for the list only after this function returns, so the list reflects the reload.
-    sync_hotkeys(app);
-    // Apps installed or removed since the last showing. Reading the folders takes a few milliseconds.
-    app.state::<AppState>().session.lock().unwrap().reload_apps();
+    // The files and the app folders are read after the window is shown and off the main thread, which delivers
+    // the key presses typed meanwhile. The page shows the previous list until the new one is loaded.
+    reload_in_background(app, EVENT_REFRESHED);
 }
 
 /// Whether the window can be shown without taking keyboard input. Only on macOS, when the panel conversion worked.
@@ -521,6 +578,7 @@ fn main() {
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             open_session,
+            refresh,
             search,
             app_icon,
             run,

@@ -160,8 +160,17 @@ loads the files again, registers the hotkeys again, and refreshes the open windo
 - The folder and its `commands` folder are created at startup if they are missing, so they can be watched.
 - If watching cannot start, a notice says so and the files are still loaded each time the launcher is shown.
 
-The files are also loaded again each time the launcher is shown (`settings.yaml` just before, `commands/*.yaml` and
-usage counts just after, since with several hundred commands loading would delay the window).
+The files are also loaded again each time the launcher is shown: `settings.yaml` just before (it decides where the
+window goes), and `commands/*.yaml`, usage counts and the app folders just after, on a background thread.
+
+Typing must never wait for loading. The main thread delivers key presses to the window, so nothing slow runs on it
+while the launcher is open:
+
+- The input takes focus as soon as the window appears, before the list is fetched.
+- Files and app folders are read on another thread without holding the session, so searches answer from the
+  previous list meanwhile. When the new list is in, the hotkeys are registered on the main thread (registration
+  must happen there; it is quick) and the page searches again for what has been typed.
+- Searching and app icons are answered off the main thread.
 
 When hotkeys overlap, the launcher's takes priority, and between commands the one that comes first by id is used.
 Different spellings of the same key combination count as an overlap (`Ctrl+Alt+C` and `ctrl+alt+KeyC`).

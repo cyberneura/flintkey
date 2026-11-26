@@ -17,9 +17,13 @@
     icon: string | null;
   }
 
-  interface View {
+  interface Refreshed {
     rows: Row[];
     problems: string[];
+  }
+
+  interface View extends Refreshed {
+    notices: string[];
     config_dir: string;
     showing: number;
   }
@@ -27,7 +31,10 @@
   let query = $state('');
   let rows = $state<Row[]>([]);
   let selected = $state(0);
-  let problems = $state<string[]>([]);
+  /** Failures from while the window was hidden, then the problems in the configuration. */
+  let notices = $state<string[]>([]);
+  let configProblems = $state<string[]>([]);
+  const problems = $derived([...notices, ...configProblems]);
   let configDir = $state('');
   let input: HTMLInputElement | undefined = $state();
   let list: HTMLUListElement | undefined = $state();
@@ -57,13 +64,23 @@
   });
 
   async function openSession() {
+    // Focus before anything is fetched: a key pressed before the input has focus is lost, and the list may take
+    // a moment (the files are read after the window appears).
+    input?.focus();
     // This can be called for a notice while the window is open. Fetch the list for the text already typed.
     const view = invoke<View>('open_session', { query });
     results.start(view.then((opened) => ({ rows: opened.rows, showing: opened.showing })));
     const opened = await view;
-    problems = opened.problems;
+    notices = opened.notices;
+    configProblems = opened.problems;
     configDir = opened.config_dir;
-    input?.focus();
+  }
+
+  /** The commands and apps were loaded again: search for the text typed so far in the new list. */
+  async function refresh() {
+    const refreshed = invoke<Refreshed>('refresh', { query });
+    results.start(refreshed.then((found) => ({ rows: found.rows })));
+    configProblems = (await refreshed).problems;
   }
 
   function search(text: string) {
@@ -77,7 +94,8 @@
     try {
       await invoke('run', { id: row.id, showing });
     } catch (error) {
-      problems = [String(error)];
+      notices = [String(error)];
+      configProblems = [];
     }
   }
 
@@ -128,11 +146,13 @@
         showing = event.payload;
         openSession();
       }),
-      // The configuration files changed on disk. Refresh an open window; a hidden one reloads when shown.
+      // The list read after this showing began, or after the files changed on disk, is ready. A hidden window
+      // loads it when shown.
+      listen('launcher-refreshed', () => {
+        if (showing !== 0) refresh();
+      }),
       listen('config-changed', () => {
-        if (showing !== 0) {
-          openSession();
-        }
+        if (showing !== 0) refresh();
       }),
       // Clear on hide so the previous input does not flash when the window next appears.
       listen('launcher-hidden', () => {
