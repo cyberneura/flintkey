@@ -16,6 +16,7 @@ pub mod search;
 pub mod secrets;
 pub mod settings;
 pub mod store;
+pub mod system;
 pub mod usage;
 
 mod atomic;

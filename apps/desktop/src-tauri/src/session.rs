@@ -77,7 +77,10 @@ pub struct Session {
     icon_problems: Vec<String>,
     app_folders: Vec<PathBuf>,
     apps: Vec<InstalledApp>,
-    /// `commands`, then the installed apps no command already opens. What is searched and run.
+    /// Built-in commands for the OS (`flintkey_core::system`).
+    system: Vec<StoredCommand>,
+    /// `commands`, then the built-in commands, then the installed apps no command already opens. What is searched
+    /// and run.
     entries: Vec<StoredCommand>,
     /// The icons of each of `entries`, best first.
     entry_icons: Vec<Vec<IconRef>>,
@@ -126,6 +129,11 @@ impl Session {
         } else {
             Vec::new()
         };
+        let system = if os == Os::Macos {
+            flintkey_core::system::macos_commands(Path::exists)
+        } else {
+            Vec::new()
+        };
         Self {
             store: Store::new(config_dir),
             usage_path: state_dir.join(USAGE_FILE),
@@ -139,6 +147,7 @@ impl Session {
             icon_problems: Vec::new(),
             app_folders,
             apps: Vec::new(),
+            system,
             entries: Vec::new(),
             entry_icons: Vec::new(),
             readings_started: 0,
@@ -152,6 +161,13 @@ impl Session {
     #[cfg(test)]
     pub fn with_app_folders(mut self, folders: Vec<PathBuf>) -> Self {
         self.app_folders = folders;
+        self
+    }
+
+    /// Leaves out the built-in commands, so a test sees only its own commands and apps.
+    #[cfg(test)]
+    pub fn without_system(mut self) -> Self {
+        self.system.clear();
         self
     }
 
@@ -263,6 +279,7 @@ impl Session {
         let opened: Vec<&Path> = self
             .commands
             .iter()
+            .chain(&self.system)
             .filter_map(|stored| match &stored.command.action {
                 Action::App { app, args } if args.is_empty() => apps::find(&self.apps, app, &self.home),
                 _ => None,
@@ -291,7 +308,7 @@ impl Session {
                 },
             })
             .collect::<Vec<_>>();
-        self.entries = self.commands.iter().cloned().chain(found).collect();
+        self.entries = self.commands.iter().chain(&self.system).cloned().chain(found).collect();
         let mut problems = Vec::new();
         self.entry_icons = self
             .entries
@@ -345,8 +362,8 @@ impl Session {
             .collect()
     }
 
-    /// Returns the commands and apps matching `query`, best match first. An empty query lists only the commands:
-    /// hundreds of apps would bury them.
+    /// Returns the commands, built-in commands and apps matching `query`, best match first. An empty query lists
+    /// only the commands: hundreds of apps would bury them.
     pub fn search(&mut self, query: &str) -> Vec<Row> {
         let commands = self.commands.len();
         let empty = query.trim().is_empty();
@@ -442,6 +459,7 @@ mod tests {
                 os,
             )
             .with_app_folders(Vec::new())
+            .without_system()
         }
     }
 
@@ -605,6 +623,34 @@ mod tests {
         assert_eq!(chat_rows[0].icons, [IconRef::App { path: messenger }]);
         // A command that passes arguments does not hide the plain app.
         assert!(editor_rows.iter().any(|row| row.title == "Editor"), "{editor_rows:?}");
+    }
+
+    #[test]
+    fn built_in_commands_are_found_by_keyword_and_hide_the_app_they_open() {
+        // Arrange
+        let fixture = Fixture::new();
+        let mut session = Session::new(
+            fixture.dir.path().join("config"),
+            &fixture.dir.path().join("state"),
+            PathBuf::from("/Users/me"),
+            Os::Macos,
+        )
+        .with_app_folders(vec![PathBuf::from("/System/Applications")]);
+        session.reload();
+
+        // Act
+        let empty = session.search("");
+        let lock = session.search("lock");
+        let settings = session.search("settings");
+
+        // Assert
+        assert!(empty.is_empty(), "{empty:?}");
+        assert_eq!(lock[0].id, "system:lock");
+        assert_eq!(settings[0].id, "system:settings");
+        // On a Mac, the System Settings app itself is listed once, as the built-in command.
+        assert_eq!(settings.iter().filter(|row| row.title == "System Settings").count(), 1);
+        let plan = session.plan("system:lock", None, None).unwrap();
+        assert!(matches!(plan, Plan::Spawn(_)), "{plan:?}");
     }
 
     #[test]
@@ -837,7 +883,8 @@ mod tests {
             PathBuf::from("/Users/me"),
             Os::Macos,
         )
-        .with_app_folders(Vec::new());
+        .with_app_folders(Vec::new())
+        .without_system();
 
         // Act
         session.reload_settings();
