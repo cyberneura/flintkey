@@ -2,6 +2,7 @@
   import { untrack } from 'svelte';
   import type { Os } from '../lib/hotkey';
   import { api, emptyCommand, problemsOf, type CommandForm, type CommandPage, type CommandSummary } from './api';
+  import { filterCommands, sameChoice, settle, tagCounts, untaggedCount, type TagChoice } from './commandFilter';
   import HotkeyPicker from './HotkeyPicker.svelte';
   import Problems from './Problems.svelte';
   import TokenInput from './TokenInput.svelte';
@@ -13,7 +14,7 @@
   let commands = $state<CommandSummary[]>([]);
   let listProblems = $state<string[]>([]);
   let filter = $state('');
-  let tag = $state('');
+  let choice = $state<TagChoice>({ kind: 'all' });
 
   /** The command being edited. `creating` means it has no file yet. */
   let selectedId = $state<string | null>(null);
@@ -32,18 +33,10 @@
   /** A command the user clicked while there were unsaved changes. */
   let pendingSwitch = $state<string | null | undefined>(undefined);
 
-  const tags = $derived([...new Set(commands.flatMap((command) => command.tags))].sort());
-  const shown = $derived(
-    commands.filter((command) => {
-      const text = filter.trim().toLowerCase();
-      const matches =
-        text === '' ||
-        command.title.toLowerCase().includes(text) ||
-        command.id.toLowerCase().includes(text) ||
-        command.keywords.some((keyword) => keyword.toLowerCase().includes(text));
-      return matches && (tag === '' || command.tags.includes(tag));
-    }),
-  );
+  const counts = $derived(tagCounts(commands));
+  const tags = $derived(counts.map((count) => count.name));
+  const untagged = $derived(untaggedCount(commands));
+  const shown = $derived(filterCommands(commands, choice, filter));
   const savedForm = $derived(page?.form ? JSON.stringify(page.form) : null);
   const dirty = $derived(
     creating ||
@@ -54,6 +47,7 @@
   async function loadList() {
     try {
       commands = await api.commandsList();
+      choice = settle(choice, commands);
       listProblems = [];
     } catch (error) {
       listProblems = problemsOf(error);
@@ -139,6 +133,8 @@
     newId = '';
     page = null;
     form = emptyCommand();
+    // A command made while a tag is chosen belongs there, so it does not vanish from the list once created.
+    if (choice.kind === 'tag') form.tags = [choice.name];
     argsText = '';
     source = '';
     view = 'form';
@@ -310,9 +306,41 @@
   const label = 'text-sm font-medium text-zinc-200';
 </script>
 
+{#snippet tagRow(item: TagChoice, name: string, count: number, annotate: string)}
+  {@const chosen = sameChoice(choice, item)}
+  <li>
+    <button
+      type="button"
+      data-annotate="commands-tag-{annotate}"
+      aria-pressed={chosen}
+      class="flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1 text-left text-sm {chosen
+        ? 'bg-zinc-700 text-zinc-50'
+        : 'text-zinc-300 hover:bg-zinc-800'}"
+      onclick={() => (choice = item)}
+    >
+      <span class="truncate">{name}</span>
+      <span class="shrink-0 text-xs text-zinc-500">{count}</span>
+    </button>
+  </li>
+{/snippet}
+
 <div class="flex h-full min-h-0 gap-4">
+  <!-- Tags -->
+  <nav class="flex w-44 shrink-0 flex-col gap-2" aria-label="Tags">
+    <span class="px-2.5 text-xs font-medium uppercase tracking-wide text-zinc-500">Tags</span>
+    <ul class="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
+      {@render tagRow({ kind: 'all' }, 'All', commands.length, 'all')}
+      {#each counts as count (count.name)}
+        {@render tagRow({ kind: 'tag', name: count.name }, count.name, count.count, `name-${count.name}`)}
+      {/each}
+      {#if untagged > 0}
+        {@render tagRow({ kind: 'untagged' }, 'Untagged', untagged, 'untagged')}
+      {/if}
+    </ul>
+  </nav>
+
   <!-- List -->
-  <div class="flex w-72 shrink-0 flex-col gap-2">
+  <div class="flex w-64 shrink-0 flex-col gap-2">
     <div class="flex gap-2">
       <input data-annotate="commands-filter" class={input} placeholder="Filter" bind:value={filter} />
       <button
@@ -324,12 +352,6 @@
         New
       </button>
     </div>
-    <select data-annotate="commands-tag" class={input} bind:value={tag}>
-      <option value="">All tags ({commands.length})</option>
-      {#each tags as name (name)}
-        <option value={name}>{name}</option>
-      {/each}
-    </select>
     <Problems problems={listProblems} />
     <ul class="min-h-0 flex-1 overflow-y-auto rounded-md border border-zinc-800" role="listbox">
       {#each shown as command (command.id)}
