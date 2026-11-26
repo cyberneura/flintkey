@@ -33,9 +33,18 @@
     }
   }
 
-  async function load() {
+  /**
+   * `background`: a reload the user did not ask for. Its answer is dropped if the user edited meanwhile, so it
+   * never replaces what they typed.
+   */
+  async function load(background = false) {
+    const before = JSON.stringify([form, source, editingSource]);
     try {
-      show(await api.settingsPage());
+      const loaded = await api.settingsPage();
+      if (background && JSON.stringify([form, source, editingSource]) !== before) {
+        return;
+      }
+      show(loaded);
     } catch (error) {
       problems = problemsOf(error);
     }
@@ -46,7 +55,7 @@
   $effect(() => {
     void reloadKey;
     untrack(() => {
-      if (!dirty) load();
+      if (!dirty) load(true);
     });
   });
 
@@ -57,7 +66,7 @@
       if (dirty) {
         changedWhileEditing = true;
       } else {
-        load();
+        load(true);
       }
     });
   });

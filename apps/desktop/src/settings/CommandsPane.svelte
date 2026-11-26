@@ -94,12 +94,19 @@
     view = loaded.form ? view : 'yaml';
   }
 
-  /** `keepStatus`: a reload after this window's own save should not clear its "Saved." */
-  async function open(id: string, keepStatus = false) {
-    if (!keepStatus) status = '';
+  /**
+   * `background`: a reload the user did not ask for. It keeps the status line (so a reload after this window's own
+   * save does not clear "Saved."), and its answer is dropped if the user switched commands or edited meanwhile.
+   */
+  async function open(id: string, background = false) {
+    if (!background) status = '';
     confirmDelete = false;
+    const before = JSON.stringify([selectedId, creating, form, source, view]);
     try {
       const loaded = await api.commandPage(id);
+      if (background && JSON.stringify([selectedId, creating, form, source, view]) !== before) {
+        return;
+      }
       selectedId = id;
       creating = false;
       showPage(loaded);
