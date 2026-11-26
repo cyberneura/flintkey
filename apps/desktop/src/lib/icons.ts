@@ -26,10 +26,13 @@ export function iconLoader(
 ) {
   const asked = new Set<string>();
   const failed = new Set<string>();
+  /** Answers to requests made before the last reset are dropped; they may describe the old configuration. */
+  let generation = 0;
 
   return {
     /** Asks again for every icon from now on, after the configuration changed. */
     reset() {
+      generation += 1;
       asked.clear();
       failed.clear();
     },
@@ -47,12 +50,15 @@ export function iconLoader(
         const key = iconKey(icon);
         if (asked.has(key)) continue;
         asked.add(key);
+        const madeIn = generation;
         fetchImage(icon).then(
           (buffer) => {
+            if (madeIn !== generation) return;
             const bytes = new Uint8Array(buffer);
             onSettled(key, URL.createObjectURL(new Blob([bytes], { type: mimeOf(bytes) })));
           },
           () => {
+            if (madeIn !== generation) return;
             failed.add(key);
             onSettled(key, 'failed');
           },

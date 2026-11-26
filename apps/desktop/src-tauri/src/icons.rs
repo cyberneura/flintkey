@@ -171,7 +171,15 @@ fn download(url: &str, site: &str, max_bytes: u64) -> Option<Vec<u8>> {
             Some((host, port)) => Some(public_address(host, *port)?),
             None => None,
         };
-        let (status, location, body) = request(&checked.url, pinned.as_deref(), max_bytes)?;
+        let pin = pinned.as_ref().map(|(resolve, _)| resolve.as_str());
+        let (status, location, remote, body) = request(&checked.url, pin, max_bytes)?;
+        // Whatever curl made of the name, the connection must have gone to the address that was checked.
+        if pinned
+            .as_ref()
+            .is_some_and(|(_, ip)| remote.parse::<std::net::IpAddr>().ok() != Some(*ip))
+        {
+            return None;
+        }
         match status {
             200..=299 => return (!body.is_empty() && body.len() as u64 <= max_bytes).then_some(body),
             300..=399 if !location.is_empty() => url = location,
@@ -184,7 +192,7 @@ fn download(url: &str, site: &str, max_bytes: u64) -> Option<Vec<u8>> {
 /// `host:port:address` for curl's `--resolve`, with an address of `host` that was checked to be public. `None` if
 /// the host does not resolve or any of its addresses is on this machine or the local network: the check and the
 /// connection then use the same address, so a name cannot resolve differently in between.
-fn public_address(host: &str, port: u16) -> Option<String> {
+fn public_address(host: &str, port: u16) -> Option<(String, std::net::IpAddr)> {
     use std::net::ToSocketAddrs;
     let addresses: Vec<_> = (host, port).to_socket_addrs().ok()?.collect();
     if addresses.is_empty() || !addresses.iter().all(|address| favicon::is_public(address.ip())) {
@@ -196,13 +204,15 @@ fn public_address(host: &str, port: u16) -> Option<String> {
     } else {
         ip.to_string()
     };
-    Some(format!("{host}:{port}:{shown}"))
+    Some((format!("{host}:{port}:{shown}"), ip))
 }
 
-/// One GET without following redirects: the status, the absolute URL a redirect points to (empty if none) and the
-/// body.
-fn request(url: &str, pinned: Option<&str>, max_bytes: u64) -> Option<(u16, String, Vec<u8>)> {
+/// One GET without following redirects: the status, the absolute URL a redirect points to (empty if none), the
+/// address connected to, and the body.
+fn request(url: &str, pinned: Option<&str>, max_bytes: u64) -> Option<(u16, String, String, Vec<u8>)> {
     let mut command = Command::new("curl");
+    // Must come first: without it a `.curlrc` could add options (such as following redirects) that undo the checks.
+    command.arg("--disable");
     if let Some(pinned) = pinned {
         command.args(["--resolve", pinned]);
     }
@@ -214,11 +224,14 @@ fn request(url: &str, pinned: Option<&str>, max_bytes: u64) -> Option<(u16, Stri
         &max_bytes.to_string(),
         "--proto",
         "=http,https",
+        // A proxy would make the connection somewhere other than the checked address.
+        "--noproxy",
+        "*",
         "--user-agent",
         "Mozilla/5.0 (compatible; Flintkey)",
         // The status and the redirect target go to stderr, so they do not mix with the body.
         "--write-out",
-        "%{stderr}%{http_code} %{redirect_url}",
+        "%{stderr}%{http_code} %{remote_ip} %{redirect_url}",
         "--",
         url,
     ]);
@@ -233,8 +246,11 @@ fn request(url: &str, pinned: Option<&str>, max_bytes: u64) -> Option<(u16, Stri
         return None;
     }
     let written = String::from_utf8_lossy(&output.stderr);
-    let (status, location) = written.trim().split_once(' ').unwrap_or((written.trim(), ""));
-    Some((status.parse().ok()?, location.trim().to_string(), output.stdout))
+    let mut parts = written.trim().splitn(3, ' ');
+    let status = parts.next()?.parse().ok()?;
+    let remote = parts.next().unwrap_or_default().to_string();
+    let location = parts.next().unwrap_or_default().trim().to_string();
+    Some((status, location, remote, output.stdout))
 }
 
 /// Whether `bytes` start like an image the page can show. A server answering an icon URL with an HTML error page

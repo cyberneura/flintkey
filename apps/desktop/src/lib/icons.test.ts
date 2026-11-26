@@ -51,6 +51,29 @@ describe('iconLoader', () => {
     expect(states[1]).not.toBe('failed');
   });
 
+  it('drops an answer to a request made before reset', async () => {
+    // Arrange
+    let rejectOld!: (reason: unknown) => void;
+    const fetchImage = vi
+      .fn<(icon: IconRef) => Promise<ArrayBuffer>>()
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => (rejectOld = reject)))
+      .mockImplementationOnce(async () => new Uint8Array([0x89, 0x50]).buffer);
+    const states: IconState[] = [];
+    const loader = iconLoader(fetchImage, (_key, state) => states.push(state));
+
+    // Act
+    loader.load([app('/Applications/A.app')]);
+    loader.reset();
+    loader.load([app('/Applications/A.app')]);
+    await flush();
+    rejectOld(new Error('old'));
+    await flush();
+
+    // Assert
+    expect(states).toHaveLength(1);
+    expect(states[0]).not.toBe('failed');
+  });
+
   it('reports a failed icon once and does not ask for it again', async () => {
     // Arrange
     const fetchImage = vi.fn(async (_icon: IconRef): Promise<ArrayBuffer> => {

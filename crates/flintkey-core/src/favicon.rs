@@ -39,6 +39,11 @@ pub fn checked(url: &str, site: &str) -> Option<Checked> {
     if !matches!(url.scheme(), "http" | "https") || !url.username().is_empty() || url.password().is_some() {
         return None;
     }
+    // `example.com.` and `example.com` are the same host to DNS but not to every tool; refusing the dotted form keeps
+    // the name that is checked and the name that is connected to identical.
+    if url.host_str().is_some_and(|host| host.ends_with('.')) {
+        return None;
+    }
     if !may_follow(&url, &site) {
         return None;
     }
@@ -353,7 +358,6 @@ mod tests {
     fn redirect_hops_are_checked_against_the_site() {
         // Act / Assert
         assert!(may_request("https://cdn.example.net/i.png", "https://example.com/"));
-        assert!(may_request("http://EXAMPLE.com./x", "https://example.com/"));
         assert!(!may_request(
             "http://169.254.169.254/latest/meta-data",
             "https://example.com/"
