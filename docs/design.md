@@ -453,8 +453,10 @@ Loading:
 - Favicons: the root page of the site (`scheme://host:port/`) is fetched, never the command's own URL (opening it
   may do something, such as signing out). The `<link rel="icon">` / `apple-touch-icon` it declares are tried,
   scalable and larger first, then `/favicon.ico`. An icon link to another host that is `localhost`, `*.local` or a
-  loopback, private or link-local address is not followed, so a page cannot make the app send requests into the
-  local network. A favicon is looked up only when its row is shown; this sends a request to the site of every
+  loopback, private, link-local or other non-public address (including one written as an IPv4-mapped IPv6 address)
+  is not followed, so a page cannot make the app send requests into the local network. Redirects are followed one
+  hop at a time (at most 5) and each hop is checked the same way. A host name that resolves to a local address is
+  not caught. A favicon is looked up only when its row is shown; this sends a request to the site of every
   `type: url` command that appears in the list.
 - Images from the web (favicons and `https://` icons) are fetched with `curl` (5 second limit) and kept in
   `icon-cache/` in the state folder. They are fetched again after 7 days; until that succeeds the old one is shown.

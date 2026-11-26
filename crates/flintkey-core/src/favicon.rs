@@ -15,17 +15,30 @@ pub fn site_root(url: &str) -> Option<String> {
     Some(format!("{}://{host}{port}/", url.scheme()))
 }
 
-/// Whether an icon URL found in a page may be fetched: one on the page's own host, or one that is not an address
-/// on this machine or the local network. A page may not use its icon links to make the app send requests to such
-/// addresses on its behalf. (A host name that resolves to one is not caught here.)
+/// Whether `url` may be requested while looking for the icon of the site whose root is `site`: an http(s) URL on
+/// the site's own host, or on a host that is not this machine or the local network. A page may not use its icon
+/// links, or redirects, to make the app send requests to such addresses on its behalf. Every redirect hop is checked
+/// too. (A host name that resolves to a local address is not caught here.)
+pub fn may_request(url: &str, site: &str) -> bool {
+    match (Url::parse(url), Url::parse(site)) {
+        (Ok(url), Ok(site)) => matches!(url.scheme(), "http" | "https") && may_follow(&url, &site),
+        _ => false,
+    }
+}
+
 fn may_follow(candidate: &Url, page: &Url) -> bool {
-    if candidate.host() == page.host() {
+    if same_host(candidate, page) {
         return true;
     }
     match candidate.host() {
         Some(Host::Domain(domain)) => {
-            let domain = domain.to_ascii_lowercase();
-            domain != "localhost" && !domain.ends_with(".localhost") && !domain.ends_with(".local")
+            let domain = domain.trim_end_matches('.').to_ascii_lowercase();
+            !(domain == "localhost"
+                || domain.ends_with(".localhost")
+                || domain.ends_with(".local")
+                || domain.ends_with(".internal")
+                || domain.ends_with(".home.arpa")
+                || !domain.contains('.'))
         }
         Some(Host::Ipv4(ip)) => public(IpAddr::V4(ip)),
         Some(Host::Ipv6(ip)) => public(IpAddr::V6(ip)),
@@ -33,13 +46,41 @@ fn may_follow(candidate: &Url, page: &Url) -> bool {
     }
 }
 
+fn same_host(a: &Url, b: &Url) -> bool {
+    let name = |url: &Url| {
+        url.host_str()
+            .map(|host| host.trim_end_matches('.').to_ascii_lowercase())
+    };
+    name(a).is_some() && name(a) == name(b)
+}
+
 fn public(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(ip) => !(ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified()),
+        IpAddr::V4(ip) => {
+            let [first, second, ..] = ip.octets();
+            !(ip.is_loopback()
+                || ip.is_private()
+                || ip.is_link_local()
+                || ip.is_unspecified()
+                || ip.is_broadcast()
+                || first == 0
+                // Shared address space (carrier-grade NAT), 100.64.0.0/10.
+                || (first == 100 && (64..128).contains(&second))
+                // Benchmarking, 198.18.0.0/15.
+                || (first == 198 && (18..20).contains(&second))
+                || first >= 224)
+        }
         IpAddr::V6(ip) => {
+            if let Some(v4) = ip.to_ipv4_mapped() {
+                return public(IpAddr::V4(v4));
+            }
             let first = ip.segments()[0];
-            // Unique local (fc00::/7) and link-local (fe80::/10).
-            !(ip.is_loopback() || ip.is_unspecified() || first & 0xfe00 == 0xfc00 || first & 0xffc0 == 0xfe80)
+            // Unique local (fc00::/7), link-local (fe80::/10), multicast (ff00::/8).
+            !(ip.is_loopback()
+                || ip.is_unspecified()
+                || first & 0xfe00 == 0xfc00
+                || first & 0xffc0 == 0xfe80
+                || first & 0xff00 == 0xff00)
         }
     }
 }
@@ -253,6 +294,10 @@ mod tests {
             <link rel="icon" href="http://[::1]/x.png">
             <link rel="icon" href="http://localhost/x.png">
             <link rel="icon" href="http://printer.local/x.png">
+            <link rel="icon" href="http://localhost./x.png">
+            <link rel="icon" href="http://[::ffff:127.0.0.1]/x.png">
+            <link rel="icon" href="http://100.100.1.1/x.png">
+            <link rel="icon" href="http://router/x.png">
             <link rel="icon" href="https://cdn.example.net/ok.png">"#;
 
         // Act
@@ -269,6 +314,19 @@ mod tests {
             local_page,
             ["http://192.168.1.10/own.png", "http://192.168.1.10/favicon.ico"]
         );
+    }
+
+    #[test]
+    fn redirect_hops_are_checked_against_the_site() {
+        // Act / Assert
+        assert!(may_request("https://cdn.example.net/i.png", "https://example.com/"));
+        assert!(may_request("http://EXAMPLE.com./x", "https://example.com/"));
+        assert!(!may_request(
+            "http://169.254.169.254/latest/meta-data",
+            "https://example.com/"
+        ));
+        assert!(!may_request("file:///etc/hosts", "https://example.com/"));
+        assert!(may_request("http://10.0.0.5/own.png", "http://10.0.0.5/"));
     }
 
     #[test]

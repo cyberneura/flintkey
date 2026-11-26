@@ -88,8 +88,10 @@ impl Icons {
             }
             IconRef::App { .. } => None,
             IconRef::File { path } => self.file(Path::new(path)),
+            // An icon URL written in the configuration was chosen by the user, so it is checked only against itself:
+            // its redirects may not move into the local network unless it is there already.
             IconRef::Url { url } => cached(&self.cache_dir, &format!("url:{url}"), || {
-                download(url, MAX_BYTES).filter(|bytes| is_image(bytes))
+                download(url, url, MAX_BYTES).filter(|bytes| is_image(bytes))
             }),
             IconRef::Favicon { url } => {
                 let root = favicon::site_root(url)?;
@@ -149,30 +151,51 @@ fn cache_name(key: &str) -> String {
 /// The icon of the site of `url`: the icons its root page declares, best first, then `/favicon.ico`.
 fn site_icon(url: &str) -> Option<Vec<u8>> {
     let root = favicon::site_root(url)?;
-    let html = download(&root, MAX_BYTES).map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+    let html = download(&root, &root, MAX_BYTES).map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
     favicon::candidates(html.as_deref().unwrap_or(""), &root)
         .iter()
-        .find_map(|url| download(url, MAX_BYTES).filter(|bytes| is_image(bytes)))
+        .find_map(|url| download(url, &root, MAX_BYTES).filter(|bytes| is_image(bytes)))
 }
 
-/// GETs `url` with curl (on macOS and on Windows 10 and later it is part of the system), following redirects.
-/// `None` on any failure, including an HTTP error status or a body over `max_bytes`.
-fn download(url: &str, max_bytes: u64) -> Option<Vec<u8>> {
+/// The most redirects followed for one request.
+const MAX_REDIRECTS: usize = 5;
+
+/// GETs `url` with curl (part of macOS, and of Windows 10 and later), following redirects one at a time so each hop
+/// can be checked with [`favicon::may_request`] against `site`. `None` on any failure, including an HTTP error
+/// status, a refused hop, or a body over `max_bytes`.
+fn download(url: &str, site: &str, max_bytes: u64) -> Option<Vec<u8>> {
+    let mut url = url.to_string();
+    for _ in 0..=MAX_REDIRECTS {
+        if !favicon::may_request(&url, site) {
+            return None;
+        }
+        let (status, location, body) = request(&url, max_bytes)?;
+        match status {
+            200..=299 => return (!body.is_empty() && body.len() as u64 <= max_bytes).then_some(body),
+            300..=399 if !location.is_empty() => url = location,
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// One GET without following redirects: the status, the absolute URL a redirect points to (empty if none) and the
+/// body.
+fn request(url: &str, max_bytes: u64) -> Option<(u16, String, Vec<u8>)> {
     let mut command = Command::new("curl");
     command.args([
-        "--fail",
         "--silent",
-        "--location",
         "--max-time",
         "5",
         "--max-filesize",
         &max_bytes.to_string(),
         "--proto",
         "=http,https",
-        "--proto-redir",
-        "=http,https",
         "--user-agent",
         "Mozilla/5.0 (compatible; Flintkey)",
+        // The status and the redirect target go to stderr, so they do not mix with the body.
+        "--write-out",
+        "%{stderr}%{http_code} %{redirect_url}",
         "--",
         url,
     ]);
@@ -183,8 +206,12 @@ fn download(url: &str, max_bytes: u64) -> Option<Vec<u8>> {
         command.creation_flags(0x0800_0000);
     }
     let output = command.output().ok()?;
-    let body = output.stdout;
-    (output.status.success() && !body.is_empty() && body.len() as u64 <= max_bytes).then_some(body)
+    if !output.status.success() {
+        return None;
+    }
+    let written = String::from_utf8_lossy(&output.stderr);
+    let (status, location) = written.trim().split_once(' ').unwrap_or((written.trim(), ""));
+    Some((status.parse().ok()?, location.trim().to_string(), output.stdout))
 }
 
 /// Whether `bytes` start like an image the page can show. A server answering an icon URL with an HTML error page
