@@ -485,8 +485,12 @@ Used for the launcher hotkey and for command hotkeys.
 
 ### Commands
 
-- A list of every command file, for every OS, including broken files (which open as raw YAML so they can be fixed).
-  Filter by text and by tag.
+- Three panes: tags, the commands under the chosen tag, and the editor for the chosen command.
+- The tag pane lists All, every tag in use with its number of commands, and Untagged (commands with no tag). A
+  command with several tags is under each of them. When the chosen tag is no longer used, the pane goes back to All.
+  New, while a tag is chosen, starts the command with that tag.
+- The list holds every command file, for every OS, including broken files (which open as raw YAML so they can be
+  fixed). The text filter matches title, id and keywords within the chosen tag.
 - Each row has a checkbox that turns the command on or off (`enabled`) without opening it. Commands that are off are
   dimmed and marked "off". The form has the same switch.
 - A form for the selected command. Every field of every action type is kept while editing, so switching the type
