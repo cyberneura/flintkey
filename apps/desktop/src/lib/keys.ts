@@ -1,4 +1,4 @@
-export type Intent = 'next' | 'previous' | 'run' | 'hide';
+export type Intent = 'next' | 'previous' | 'run' | 'hide' | 'settings';
 
 export interface KeyInput {
   key: string;
@@ -6,6 +6,7 @@ export interface KeyInput {
   isComposing: boolean;
   ctrlKey: boolean;
   shiftKey: boolean;
+  metaKey?: boolean;
 }
 
 /** The keyCode an IME gives keys during composition. */
@@ -36,6 +37,9 @@ export function intentFor(input: KeyInput): Intent | null {
       return input.ctrlKey ? 'next' : null;
     case 'p':
       return input.ctrlKey ? 'previous' : null;
+    // ⌘, on macOS, Ctrl+, elsewhere: the usual shortcut for an app's settings.
+    case ',':
+      return input.metaKey || input.ctrlKey ? 'settings' : null;
     default:
       return null;
   }

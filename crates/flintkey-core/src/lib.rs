@@ -6,6 +6,7 @@
 pub mod alfred;
 pub mod command;
 pub mod diagnostic;
+pub mod hotkey;
 pub mod launch;
 pub mod paths;
 pub mod search;

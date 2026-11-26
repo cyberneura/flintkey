@@ -1108,7 +1108,7 @@ dependencies = [
 
 [[package]]
 name = "flintkey-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "nucleo-matcher",
  "open",
@@ -1122,12 +1122,13 @@ dependencies = [
 
 [[package]]
 name = "flintkey-desktop"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "flintkey-core",
  "objc2",
  "open",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-global-shortcut",

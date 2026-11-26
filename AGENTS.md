@@ -17,7 +17,11 @@ A keyboard launcher. The specification is `docs/design.md`; the overview is `REA
   - `src-tauri/src/showing.rs`: A number per showing of the window, and accepting run requests (pure state).
   - `src-tauri/src/hotkeys.rs`: Decides the set of shortcuts to register from the hotkeys in the settings (pure functions).
   - `src-tauri/src/panel.rs`: Replaces the window with an NSPanel on macOS.
+  - `src-tauri/src/settings_ui.rs`: Commands for the settings window. `forms.rs` converts its forms to and from
+    the core types (pure functions).
   - `src/`: The launcher window's page. Key handling is in `src/lib/keys.ts`.
+  - `src/settings/` and `settings.html`: The settings window's page. Hotkey strings are read and written in
+    `src/lib/hotkey.ts`.
 
 ## Commands
 

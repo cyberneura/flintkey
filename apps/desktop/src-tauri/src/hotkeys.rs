@@ -29,28 +29,22 @@ pub struct Wanted {
 /// (`Ctrl+Alt+C` vs `ctrl+alt+KeyC`) compare as the same shortcut.
 pub fn wanted(launcher: &str, commands: &[(String, String)]) -> Wanted {
     let mut out = Wanted::default();
-    match launcher.parse::<Shortcut>() {
+    match check(launcher) {
         Ok(shortcut) => {
             out.launcher_readable = true;
             out.shortcuts.insert(shortcut, (Target::Launcher, launcher.to_string()));
         }
-        Err(error) => out.problems.push(format!("hotkey `{launcher}`: {}", reason(&error))),
+        Err(reason) => out.problems.push(format!("hotkey `{launcher}`: {reason}")),
     }
     for (id, hotkey) in commands {
         let place = format!("commands/{id}.yaml: hotkey `{hotkey}`");
-        let shortcut = match hotkey.parse::<Shortcut>() {
+        let shortcut = match check(hotkey) {
             Ok(shortcut) => shortcut,
-            Err(error) => {
-                out.problems.push(format!("{place}: {}", reason(&error)));
+            Err(reason) => {
+                out.problems.push(format!("{place}: {reason}"));
                 continue;
             }
         };
-        if !has_modifier_or_is_a_function_key(&shortcut) {
-            out.problems.push(format!(
-                "{place} needs a modifier key; on its own it would fire while typing in other applications"
-            ));
-            continue;
-        }
         match out.shortcuts.get(&shortcut) {
             Some((Target::Launcher, _)) => out.problems.push(format!("{place} is already the launcher's hotkey")),
             Some((Target::Command(other), _)) => out.problems.push(format!("{place} is already used by `{other}`")),
@@ -61,6 +55,15 @@ pub fn wanted(launcher: &str, commands: &[(String, String)]) -> Wanted {
         }
     }
     out
+}
+
+/// Reads a hotkey and refuses one that would fire during ordinary typing.
+pub fn check(hotkey: &str) -> Result<Shortcut, String> {
+    let shortcut = hotkey.parse::<Shortcut>().map_err(|error| reason(&error))?;
+    if !has_modifier_or_is_a_function_key(&shortcut) {
+        return Err("needs a modifier key; on its own it would fire while typing in other applications".into());
+    }
+    Ok(shortcut)
 }
 
 /// Brings the registered set in line with `wanted`. `register` returns `true` on success. Returns the problems
@@ -388,12 +391,25 @@ mod tests {
         assert_eq!(
             wanted.problems,
             [
-                "commands/a.yaml: hotkey `a` needs a modifier key; on its own it would fire while typing in other applications",
-                "commands/b.yaml: hotkey `space` needs a modifier key; on its own it would fire while typing in other applications",
+                "commands/a.yaml: hotkey `a`: needs a modifier key; on its own it would fire while typing in other applications",
+                "commands/b.yaml: hotkey `space`: needs a modifier key; on its own it would fire while typing in other applications",
             ]
         );
         assert_eq!(target(&wanted, "f13"), Some(Target::Command("f".into())));
         assert_eq!(wanted.shortcuts.len(), 2);
+    }
+
+    #[test]
+    fn a_launcher_hotkey_without_a_modifier_is_refused_like_a_command_hotkey() {
+        // Arrange / Act
+        let wanted = wanted("space", &[]);
+
+        // Assert
+        assert!(!wanted.launcher_readable);
+        assert_eq!(
+            wanted.problems,
+            ["hotkey `space`: needs a modifier key; on its own it would fire while typing in other applications"]
+        );
     }
 
     #[test]

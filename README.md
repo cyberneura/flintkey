@@ -5,7 +5,8 @@ A keyboard launcher. Its settings live in files, so they can be shared across ma
 Supported OSes are macOS (primary) and Windows. The design is in [docs/design.md](docs/design.md).
 
 It stays in the menu bar (the system tray on Windows) and opens an input window with a hotkey (`alt+space` by default).
-There is no settings UI or plugin support yet; settings are written directly as YAML files.
+Settings can be edited in the settings window (tray menu → Settings…, or ⌘, in the launcher) or directly as YAML files.
+There is no plugin support yet.
 
 ## Example settings
 
