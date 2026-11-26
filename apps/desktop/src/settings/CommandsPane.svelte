@@ -20,6 +20,8 @@
   let page = $state<CommandPage | null>(null);
   let form = $state<CommandForm>(emptyCommand());
   let source = $state('');
+  /** The arguments box as typed. Kept apart from `form.args` so a line being typed is not cut off. */
+  let argsText = $state('');
   let view = $state<'form' | 'yaml'>('form');
   let problems = $state<string[]>([]);
   let status = $state('');
@@ -113,6 +115,7 @@
     newId = '';
     page = null;
     form = emptyCommand();
+    argsText = '';
     source = '';
     view = 'form';
     problems = [];
@@ -242,6 +245,24 @@
     { value: 'windows', label: 'Windows' },
     { value: 'linux', label: 'Linux' },
   ];
+
+  // Only an edited box drops empty lines at the end (a new line is typed before its text). Untouched arguments,
+  // including a meaningful trailing empty one, are saved as they were loaded.
+  function argsFromText(text: string): string[] {
+    const lines = text.split('\n');
+    while (lines.length > 0 && lines[lines.length - 1] === '') {
+      lines.pop();
+    }
+    return lines;
+  }
+
+  $effect(() => {
+    // Refill the box whenever a different form is loaded (open, new, revert, YAML → form).
+    void page;
+    void view;
+    void creating;
+    untrack(() => (argsText = form.args.join('\n')));
+  });
 
   function toggleOs(value: string) {
     form.os = form.os.includes(value) ? form.os.filter((os) => os !== value) : [...form.os, value];
@@ -402,11 +423,8 @@
                 data-annotate="command-args"
                 class="{input} h-20 font-mono"
                 spellcheck="false"
-                value={form.args.join('\n')}
-                oninput={(event) => {
-                  const lines = event.currentTarget.value.split('\n');
-                  form.args = lines.length === 1 && lines[0] === '' ? [] : lines;
-                }}
+                bind:value={argsText}
+                oninput={() => (form.args = argsFromText(argsText))}
               ></textarea>
             </label>
           {:else}

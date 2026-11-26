@@ -109,15 +109,8 @@ impl CommandForm {
             "url" => Action::Url { url: text(&self.url) },
             "app" => Action::App {
                 app: text(&self.app),
-                // Arguments are kept as typed: an empty or repeated argument can be intended. Only empty lines at the
-                // end are dropped (the form edits one argument per line, and a new line is typed before its text).
-                args: {
-                    let mut args = self.args.clone();
-                    while args.last().is_some_and(String::is_empty) {
-                        args.pop();
-                    }
-                    args
-                },
+                // Arguments are kept exactly: an empty or repeated argument can be meaningful.
+                args: self.args.clone(),
             },
             "script" => {
                 let mut env = BTreeMap::new();
@@ -218,13 +211,13 @@ mod tests {
     }
 
     #[test]
-    fn arguments_keep_empty_and_repeated_entries_except_trailing_empty_lines() {
+    fn arguments_keep_empty_and_repeated_entries() {
         // Arrange
         let form = CommandForm {
             title: "T".into(),
             kind: "app".into(),
             app: "Tool".into(),
-            args: vec!["".into(), "-v".into(), "-v".into(), "".into(), "".into()],
+            args: vec!["".into(), "-v".into(), "-v".into(), "--password".into(), "".into()],
             ..CommandForm::default()
         };
 
@@ -236,7 +229,7 @@ mod tests {
             command.action,
             Action::App {
                 app: "Tool".into(),
-                args: vec!["".into(), "-v".into(), "-v".into()]
+                args: vec!["".into(), "-v".into(), "-v".into(), "--password".into(), "".into()]
             }
         );
     }
