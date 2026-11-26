@@ -10,6 +10,7 @@ the configuration is kept as files, can be shared across machines with Git, and 
 | Core (`crates/flintkey-core`): reading and writing configuration, validation, actions, secrets, search | Implemented |
 | Desktop app (`apps/desktop`): background process, tray, hotkey, launcher window | Implemented |
 | Per-command hotkeys | Implemented |
+| App search with icons (macOS) | Implemented |
 | Migration from Alfred (`import-alfred` in the CLI) | Implemented |
 | Widgets (above the launcher window) | Not implemented |
 | Settings window (general settings, launcher hotkey, commands) | Implemented |
@@ -391,6 +392,28 @@ Within the same tier: for 3, match quality, then usage count, then title. For 1 
 Commands that do not match are not shown. Symbols in the input such as `!` and `^` are matched as literal characters.
 
 Usage counts are kept in `usage.json` in the state folder.
+
+## App search
+
+On macOS, installed apps are searched along with the commands, without a command file for each
+(`crates/flintkey-core/src/apps.rs`).
+
+- An app is an `.app` bundle in `~/Applications`, `/Applications` or `/System/Applications`, or in a folder directly
+  inside one of them (`Utilities`, the `… Apps.localized` folders browsers make for web apps), plus Finder. Bundles
+  inside other bundles are not apps. When two folders have an app with the same name, the first in that order is
+  used.
+- Symlinks are followed, so an app built elsewhere can be made searchable by linking it into `~/Applications`.
+- The folders are read each time the launcher is shown (a few milliseconds); Spotlight is not used.
+- An app is matched by its file name as Finder shows it (`System Settings`, not a localized name such as
+  `システム設定`). It has no keywords, so it ranks as a fuzzy title match (tier 3).
+- Apps are not listed while the input is empty; only commands are.
+- An app that a command opens without arguments (`app:` naming it or its path) is not listed separately, so it does
+  not appear twice. A command that passes arguments does not hide the app.
+- An app's id is `app:` followed by its path. Usage counts are kept by that id, like a command's.
+- Rows for apps, and for `type: app` commands whose app is found, show the app's icon. The icon is drawn by the
+  system (`NSWorkspace`), so icons kept in an asset catalog work, and is cached for as long as the app runs.
+
+Windows and Linux have no app search.
 
 ## Migrating from Alfred
 

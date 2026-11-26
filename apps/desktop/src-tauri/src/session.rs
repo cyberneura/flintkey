@@ -1,5 +1,7 @@
-//! App state that does not depend on the window. Reads the config folder, searches, and plans runs.
+//! App state that does not depend on the window. Reads the config folder, finds installed apps, searches, and
+//! plans runs.
 
+use flintkey_core::apps::{self, InstalledApp};
 use flintkey_core::launch::{self, Machine, Plan};
 use flintkey_core::search::Searcher;
 use flintkey_core::settings::Settings;
@@ -10,6 +12,9 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 const SETTINGS_FILE: &str = "settings.yaml";
+/// The id of an installed app found by [`apps::scan`]. No command file can have it: `:` is not in file names
+/// Flintkey writes, and the folder is read on macOS, where Finder shows `:` as `/`.
+const APP_ID_PREFIX: &str = "app:";
 
 /// One row of the list.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -22,6 +27,8 @@ pub struct Row {
     pub kind: &'static str,
     /// One line describing what happens (URL, app name, command).
     pub detail: String,
+    /// The app bundle whose icon the row shows: the app itself, or the app a command opens.
+    pub icon: Option<String>,
 }
 
 pub struct Session {
@@ -33,12 +40,21 @@ pub struct Session {
     settings_problems: Vec<String>,
     commands: Vec<StoredCommand>,
     command_problems: Vec<String>,
+    app_folders: Vec<PathBuf>,
+    apps: Vec<InstalledApp>,
+    /// `commands`, then the installed apps no command already opens. What is searched and run.
+    entries: Vec<StoredCommand>,
     usage: Usage,
     searcher: Searcher,
 }
 
 impl Session {
     pub fn new(config_dir: PathBuf, state_dir: &Path, home: PathBuf, os: Os) -> Self {
+        let app_folders = if os == Os::Macos {
+            apps::folders(&home)
+        } else {
+            Vec::new()
+        };
         Self {
             store: Store::new(config_dir),
             usage_path: state_dir.join(USAGE_FILE),
@@ -48,9 +64,19 @@ impl Session {
             settings_problems: Vec::new(),
             commands: Vec::new(),
             command_problems: Vec::new(),
+            app_folders,
+            apps: Vec::new(),
+            entries: Vec::new(),
             usage: Usage::default(),
             searcher: Searcher::default(),
         }
+    }
+
+    /// Searches `folders` for apps instead of the system's Applications folders.
+    #[cfg(test)]
+    pub fn with_app_folders(mut self, folders: Vec<PathBuf>) -> Self {
+        self.app_folders = folders;
+        self
     }
 
     pub fn store(&self) -> &Store {
@@ -114,6 +140,48 @@ impl Session {
                 self.command_problems.push(format!("commands: {error}"));
             }
         }
+        self.rebuild_entries();
+    }
+
+    /// Looks for installed apps again. Apps are found by their file name; the folders are read, not Spotlight.
+    pub fn reload_apps(&mut self) {
+        self.apps = apps::scan(&self.app_folders);
+        self.rebuild_entries();
+    }
+
+    fn rebuild_entries(&mut self) {
+        // An app that a command already opens as it is would be listed twice under the same name.
+        let opened: Vec<&Path> = self
+            .commands
+            .iter()
+            .filter_map(|stored| match &stored.command.action {
+                Action::App { app, args } if args.is_empty() => apps::find(&self.apps, app, &self.home),
+                _ => None,
+            })
+            .map(|installed| installed.path.as_path())
+            .collect();
+        let found = self
+            .apps
+            .iter()
+            .filter(|installed| !opened.contains(&installed.path.as_path()))
+            .map(|installed| StoredCommand {
+                id: format!("{APP_ID_PREFIX}{}", installed.path.display()),
+                command: flintkey_core::Command {
+                    title: installed.name.clone(),
+                    enabled: true,
+                    keywords: Vec::new(),
+                    hotkey: None,
+                    pin: false,
+                    tags: Vec::new(),
+                    os: [].into(),
+                    action: Action::App {
+                        app: installed.path.display().to_string(),
+                        args: Vec::new(),
+                    },
+                },
+            })
+            .collect::<Vec<_>>();
+        self.entries = self.commands.iter().cloned().chain(found).collect();
     }
 
     /// Problems in the config files. Settings first, then commands.
@@ -125,12 +193,16 @@ impl Session {
             .collect()
     }
 
-    /// Returns the commands matching `query`, best match first.
+    /// Returns the commands and apps matching `query`, best match first. An empty query lists only the commands:
+    /// hundreds of apps would bury them.
     pub fn search(&mut self, query: &str) -> Vec<Row> {
+        let commands = self.commands.len();
+        let empty = query.trim().is_empty();
         self.searcher
-            .rank(&self.commands, &self.usage, query)
+            .rank(&self.entries, &self.usage, query)
             .into_iter()
-            .map(|index| row(&self.commands[index]))
+            .filter(|&index| !empty || index < commands)
+            .map(|index| row(&self.entries[index], &self.apps, &self.home))
             .collect()
     }
 
@@ -145,7 +217,7 @@ impl Session {
     /// Plans how to run command `id`. Does not touch secrets.
     pub fn plan(&self, id: &str, shell: Option<&str>, path: Option<&str>) -> Result<Plan, String> {
         let stored = self
-            .commands
+            .entries
             .iter()
             .find(|stored| stored.id == id)
             .ok_or_else(|| format!("`{id}` no longer exists"))?;
@@ -167,8 +239,12 @@ impl Session {
     }
 }
 
-fn row(stored: &StoredCommand) -> Row {
+fn row(stored: &StoredCommand, apps: &[InstalledApp], home: &Path) -> Row {
     let command = &stored.command;
+    let icon = match &command.action {
+        Action::App { app, .. } => apps::find(apps, app, home).map(|installed| installed.path.display().to_string()),
+        _ => None,
+    };
     let detail = match &command.action {
         Action::Url { url } => url.clone(),
         Action::App { app, args } => std::iter::once(app).chain(args).cloned().collect::<Vec<_>>().join(" "),
@@ -181,6 +257,7 @@ fn row(stored: &StoredCommand) -> Row {
         hotkey: command.hotkey.clone(),
         kind: command.action.type_name(),
         detail,
+        icon,
     }
 }
 
@@ -216,6 +293,7 @@ mod tests {
                 PathBuf::from("/Users/me"),
                 os,
             )
+            .with_app_folders(Vec::new())
         }
     }
 
@@ -228,7 +306,10 @@ mod tests {
         // Arrange
         let fixture = Fixture::new();
         fixture.command("site", "title: Site\nkeyword: s\ntype: url\nurl: https://example.com\n");
-        fixture.command("editor", "title: Editor\ntype: app\napp: Zed\nargs: [--new, ~/work]\n");
+        fixture.command(
+            "editor",
+            "title: Editor\ntype: app\napp: Editor\nargs: [--new, ~/work]\n",
+        );
         fixture.command(
             "deploy",
             "title: Deploy\ntype: script\nrun: |\n  fab deploy\n  echo done\n",
@@ -251,11 +332,12 @@ mod tests {
                 hotkey: None,
                 kind: "url",
                 detail: "https://example.com".into(),
+                icon: None,
             }
         );
         assert_eq!(
             (by_id("editor").kind, by_id("editor").detail),
-            ("app", "Zed --new ~/work".into())
+            ("app", "Editor --new ~/work".into())
         );
         assert_eq!(
             (by_id("deploy").kind, by_id("deploy").detail),
@@ -265,6 +347,133 @@ mod tests {
             (by_id("logs").kind, by_id("logs").detail),
             ("terminal", "tail -f log".into())
         );
+    }
+
+    /// A session whose app search looks in `Applications` inside the fixture, holding these bundles.
+    fn with_apps(fixture: &Fixture, bundles: &[&str]) -> Session {
+        let folder = fixture.dir.path().join("Applications");
+        for bundle in bundles {
+            fs::create_dir_all(folder.join(bundle).join("Contents")).unwrap();
+        }
+        let mut session = fixture.session(Os::Macos).with_app_folders(vec![folder]);
+        session.reload_commands();
+        session.reload_apps();
+        session
+    }
+
+    #[test]
+    fn installed_apps_are_found_by_a_query_but_not_listed_without_one() {
+        // Arrange
+        let fixture = Fixture::new();
+        fixture.command("site", "title: Site\ntype: url\nurl: https://example.com\n");
+        let mut session = with_apps(&fixture, &["Calculator.app", "Calendar.app"]);
+        let calculator = fixture
+            .dir
+            .path()
+            .join("Applications/Calculator.app")
+            .display()
+            .to_string();
+
+        // Act
+        let empty = session.search("");
+        let found = session.search("calcu");
+
+        // Assert
+        assert_eq!(ids(&empty), ["site"]);
+        assert_eq!(
+            found,
+            [Row {
+                id: format!("app:{calculator}"),
+                title: "Calculator".into(),
+                keywords: vec![],
+                hotkey: None,
+                kind: "app",
+                detail: calculator.clone(),
+                icon: Some(calculator),
+            }]
+        );
+    }
+
+    #[test]
+    fn an_installed_app_can_be_planned_and_its_use_counted() {
+        // Arrange
+        let fixture = Fixture::new();
+        let mut session = with_apps(&fixture, &["Calculator.app"]);
+        let id = session.search("calc")[0].id.clone();
+
+        // Act
+        let plan = session.plan(&id, None, None);
+        session.record_use(&id).unwrap();
+
+        // Assert
+        let Ok(Plan::Spawn(process)) = plan else {
+            panic!("{plan:?}")
+        };
+        assert_eq!(process.program, "/usr/bin/open");
+        assert_eq!(
+            process.args[1],
+            fixture
+                .dir
+                .path()
+                .join("Applications/Calculator.app")
+                .display()
+                .to_string()
+        );
+        assert_eq!(
+            Usage::load(&fixture.dir.path().join("state").join(USAGE_FILE)).count(&id),
+            1
+        );
+    }
+
+    #[test]
+    fn an_app_a_command_opens_as_it_is_is_listed_once_with_its_icon() {
+        // Arrange
+        let fixture = Fixture::new();
+        fixture.command("chat", "title: Team chat\nkeyword: chat\ntype: app\napp: Messenger\n");
+        fixture.command(
+            "editor-new",
+            "title: New editor window\ntype: app\napp: Editor\nargs: [--new]\n",
+        );
+        let mut session = with_apps(&fixture, &["Messenger.app", "Editor.app"]);
+        let messenger = fixture
+            .dir
+            .path()
+            .join("Applications/Messenger.app")
+            .display()
+            .to_string();
+
+        // Act
+        let messenger_rows = session.search("messenger");
+        let chat_rows = session.search("chat");
+        let editor_rows = session.search("editor");
+
+        // Assert
+        assert!(
+            messenger_rows.iter().all(|row| row.title != "Messenger"),
+            "{messenger_rows:?}"
+        );
+        assert_eq!(chat_rows[0].id, "chat");
+        assert_eq!(chat_rows[0].icon.as_deref(), Some(messenger.as_str()));
+        // A command that passes arguments does not hide the plain app.
+        assert!(editor_rows.iter().any(|row| row.title == "Editor"), "{editor_rows:?}");
+    }
+
+    #[test]
+    fn apps_are_only_searched_on_macos() {
+        // Arrange
+        let fixture = Fixture::new();
+        let mut session = Session::new(
+            fixture.dir.path().join("config"),
+            &fixture.dir.path().join("state"),
+            PathBuf::from("/home/me"),
+            Os::Linux,
+        );
+
+        // Act
+        session.reload_apps();
+
+        // Assert
+        assert!(session.app_folders.is_empty());
     }
 
     #[test]
@@ -360,7 +569,8 @@ mod tests {
             &dir.path().join("state"),
             PathBuf::from("/Users/me"),
             Os::Macos,
-        );
+        )
+        .with_app_folders(Vec::new());
 
         // Act
         session.reload_settings();
