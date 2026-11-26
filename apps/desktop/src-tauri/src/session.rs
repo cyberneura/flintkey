@@ -306,7 +306,10 @@ mod tests {
         // Arrange
         let fixture = Fixture::new();
         fixture.command("site", "title: Site\nkeyword: s\ntype: url\nurl: https://example.com\n");
-        fixture.command("editor", "title: Editor\ntype: app\napp: Zed\nargs: [--new, ~/work]\n");
+        fixture.command(
+            "editor",
+            "title: Editor\ntype: app\napp: Editor\nargs: [--new, ~/work]\n",
+        );
         fixture.command(
             "deploy",
             "title: Deploy\ntype: script\nrun: |\n  fab deploy\n  echo done\n",
@@ -334,7 +337,7 @@ mod tests {
         );
         assert_eq!(
             (by_id("editor").kind, by_id("editor").detail),
-            ("app", "Zed --new ~/work".into())
+            ("app", "Editor --new ~/work".into())
         );
         assert_eq!(
             (by_id("deploy").kind, by_id("deploy").detail),
@@ -426,25 +429,33 @@ mod tests {
     fn an_app_a_command_opens_as_it_is_is_listed_once_with_its_icon() {
         // Arrange
         let fixture = Fixture::new();
-        fixture.command("chat", "title: Team chat\nkeyword: chat\ntype: app\napp: Slack\n");
+        fixture.command("chat", "title: Team chat\nkeyword: chat\ntype: app\napp: Messenger\n");
         fixture.command(
             "editor-new",
-            "title: New editor window\ntype: app\napp: Zed\nargs: [--new]\n",
+            "title: New editor window\ntype: app\napp: Editor\nargs: [--new]\n",
         );
-        let mut session = with_apps(&fixture, &["Slack.app", "Zed.app"]);
-        let slack = fixture.dir.path().join("Applications/Slack.app").display().to_string();
+        let mut session = with_apps(&fixture, &["Messenger.app", "Editor.app"]);
+        let messenger = fixture
+            .dir
+            .path()
+            .join("Applications/Messenger.app")
+            .display()
+            .to_string();
 
         // Act
-        let slack_rows = session.search("slack");
+        let messenger_rows = session.search("messenger");
         let chat_rows = session.search("chat");
-        let zed_rows = session.search("zed");
+        let editor_rows = session.search("editor");
 
         // Assert
-        assert!(slack_rows.iter().all(|row| row.title != "Slack"), "{slack_rows:?}");
+        assert!(
+            messenger_rows.iter().all(|row| row.title != "Messenger"),
+            "{messenger_rows:?}"
+        );
         assert_eq!(chat_rows[0].id, "chat");
-        assert_eq!(chat_rows[0].icon.as_deref(), Some(slack.as_str()));
+        assert_eq!(chat_rows[0].icon.as_deref(), Some(messenger.as_str()));
         // A command that passes arguments does not hide the plain app.
-        assert!(zed_rows.iter().any(|row| row.title == "Zed"), "{zed_rows:?}");
+        assert!(editor_rows.iter().any(|row| row.title == "Editor"), "{editor_rows:?}");
     }
 
     #[test]

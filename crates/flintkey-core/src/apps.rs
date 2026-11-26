@@ -110,20 +110,20 @@ mod tests {
         // Arrange
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("Applications");
-        bundle(&root, "Zed.app");
+        bundle(&root, "Editor.app");
         bundle(&root, "Utilities/Terminal.app");
         bundle(&root, "Web Apps.localized/Mail Web.app");
         bundle(&root, "Deep/Nested/Hidden Away.app");
         bundle(&root, ".Hidden.app");
-        bundle(&root, "Zed.app/Contents/Helpers/Zed Helper.app");
+        bundle(&root, "Editor.app/Contents/Helpers/Editor Helper.app");
         fs::write(root.join("notes.app"), "not a bundle").unwrap();
 
         // Act
         let apps = scan(&[root.clone(), dir.path().join("missing")]);
 
         // Assert
-        assert_eq!(names(&apps), ["Mail Web", "Terminal", "Zed"]);
-        assert_eq!(apps[1].path, root.join("Utilities/Terminal.app"));
+        assert_eq!(names(&apps), ["Editor", "Mail Web", "Terminal"]);
+        assert_eq!(apps[2].path, root.join("Utilities/Terminal.app"));
     }
 
     #[test]
@@ -181,8 +181,8 @@ mod tests {
         let home = Path::new("/Users/me");
         let apps = [
             InstalledApp {
-                name: "Slack".into(),
-                path: "/Applications/Slack.app".into(),
+                name: "Messenger".into(),
+                path: "/Applications/Messenger.app".into(),
             },
             InstalledApp {
                 name: "Tool".into(),
@@ -191,13 +191,19 @@ mod tests {
         ];
 
         // Act / Assert
-        assert_eq!(find(&apps, "slack", home).map(|a| a.name.as_str()), Some("Slack"));
-        assert_eq!(find(&apps, "Slack.app", home).map(|a| a.name.as_str()), Some("Slack"));
+        assert_eq!(
+            find(&apps, "messenger", home).map(|a| a.name.as_str()),
+            Some("Messenger")
+        );
+        assert_eq!(
+            find(&apps, "Messenger.app", home).map(|a| a.name.as_str()),
+            Some("Messenger")
+        );
         assert_eq!(
             find(&apps, "~/Applications/Tool.app", home).map(|a| a.name.as_str()),
             Some("Tool")
         );
-        assert_eq!(find(&apps, "/Elsewhere/Slack.app", home), None);
+        assert_eq!(find(&apps, "/Elsewhere/Messenger.app", home), None);
         assert_eq!(find(&apps, "Mail", home), None);
     }
 }
