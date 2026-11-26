@@ -2,7 +2,8 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { onMount } from 'svelte';
-  import { iconLoader } from './lib/icons';
+  import { iconLoader, pickIcon, type IconRef, type IconState } from './lib/icons';
+  import TypeIcon from './lib/TypeIcon.svelte';
   import { intentFor, moveSelection } from './lib/keys';
   import { latestOnly } from './lib/latest';
 
@@ -13,8 +14,8 @@
     hotkey: string | null;
     kind: string;
     detail: string;
-    /** The app bundle whose icon the row shows. */
-    icon: string | null;
+    /** Pictures to show, best first. When none loads, the row shows the icon of its `kind`. */
+    icons: IconRef[];
   }
 
   interface Refreshed {
@@ -38,16 +39,23 @@
   let configDir = $state('');
   let input: HTMLInputElement | undefined = $state();
   let list: HTMLUListElement | undefined = $state();
-  /** Image URL by bundle path, filled in as icons arrive. */
-  let iconUrls = $state<Record<string, string>>({});
+  /** Image URL (or `failed`) by icon, filled in as icons arrive. */
+  let iconStates = $state<Record<string, IconState>>({});
   const icons = iconLoader(
-    (path) => invoke<ArrayBuffer>('app_icon', { path }),
-    (path, url) => (iconUrls[path] = url),
+    (icon) => invoke<ArrayBuffer>('icon', { icon }),
+    (key, state) => (iconStates[key] = state),
   );
 
   $effect(() => {
-    icons.load(rows.map((row) => row.icon));
+    icons.load(rows.flatMap((row) => row.icons));
   });
+
+  /** An image that arrived but cannot be drawn (a truncated PNG, a broken SVG): fall back to the next icon. */
+  function markUndecodable(url: string) {
+    for (const [key, state] of Object.entries(iconStates)) {
+      if (state === url) iconStates[key] = 'failed';
+    }
+  }
 
   // Number of the current showing (0 while hidden). Sent with run requests so the app can match it against
   // the current showing. Prevents actions from a previous showing from running after the window reopens.
@@ -144,6 +152,9 @@
     const unlisten = [
       listen<number>('launcher-shown', (event) => {
         showing = event.payload;
+        // Icons that failed while hidden (offline, for instance) get another chance; the row keeps its type icon
+        // until they load.
+        for (const key of icons.retryFailed()) delete iconStates[key];
         openSession();
       }),
       // The list read after this showing began, or after the files changed on disk, is ready. A hidden window
@@ -152,6 +163,10 @@
         if (showing !== 0) refresh();
       }),
       listen('config-changed', () => {
+        // An icon file may have been replaced or an icon value fixed.
+        icons.reset();
+        Object.values(iconStates).forEach((state) => state !== 'failed' && URL.revokeObjectURL(state));
+        iconStates = {};
         if (showing !== 0) refresh();
       }),
       // Clear on hide so the previous input does not flash when the window next appears.
@@ -190,6 +205,7 @@
     {#if rows.length > 0}
       <ul bind:this={list} role="listbox" class="min-h-0 overflow-y-auto border-t border-zinc-700 py-1">
         {#each rows as row, index (row.id)}
+          {@const picture = pickIcon(row.icons, iconStates)}
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <li
             data-annotate="row-{row.id}"
@@ -202,8 +218,16 @@
             onclick={() => run(row)}
           >
             <div class="flex size-8 shrink-0 items-center justify-center">
-              {#if row.icon && iconUrls[row.icon]}
-                <img src={iconUrls[row.icon]} alt="" class="size-8" draggable="false" />
+              {#if picture}
+                <img
+                  src={picture}
+                  alt=""
+                  class="size-8 object-contain"
+                  draggable="false"
+                  onerror={() => markUndecodable(picture)}
+                />
+              {:else}
+                <TypeIcon kind={row.kind} />
               {/if}
             </div>
             <div class="flex min-w-0 flex-1 flex-col">

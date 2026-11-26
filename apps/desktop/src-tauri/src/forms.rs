@@ -35,6 +35,8 @@ pub struct CommandForm {
     /// (empty or repeated name) survives until it is saved.
     pub env: Vec<(String, String)>,
     pub pin: bool,
+    /// Empty means no icon of its own.
+    pub icon: String,
     pub tags: Vec<String>,
     /// OS names. Empty means every OS.
     pub os: Vec<String>,
@@ -55,6 +57,7 @@ impl Default for CommandForm {
             cwd: String::new(),
             env: Vec::new(),
             pin: false,
+            icon: String::new(),
             tags: Vec::new(),
             os: Vec::new(),
         }
@@ -93,6 +96,7 @@ impl CommandForm {
             hotkey: command.hotkey.clone().unwrap_or_default(),
             kind: command.action.type_name().to_string(),
             pin: command.pin,
+            icon: command.icon.clone().unwrap_or_default(),
             tags: command.tags.clone(),
             os: command.os.iter().map(|os| os.name().to_string()).collect(),
             ..CommandForm::default()
@@ -168,6 +172,7 @@ impl CommandForm {
             keywords: list(&self.keywords),
             hotkey: optional(&self.hotkey),
             pin: self.pin,
+            icon: optional(&self.icon),
             tags: list(&self.tags),
             os,
             action,

@@ -15,6 +15,7 @@ use crate::atomic::write_atomically;
 use crate::command::{Command, parse_command};
 use crate::diagnostic::Diagnostic;
 use crate::document;
+use crate::icon::{ICONS_FILE, IconConfig, parse_icons};
 use crate::settings::{Settings, parse_settings};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -262,6 +263,15 @@ impl Store {
             Err(error) => Err(error),
         }
     }
+
+    /// Reads `icons.yaml`. Empty if the file is missing.
+    pub fn load_icons(&self) -> io::Result<Result<IconConfig, Vec<Diagnostic>>> {
+        match std::fs::read_to_string(self.root.join(ICONS_FILE)) {
+            Ok(source) => Ok(parse_icons(&source)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Ok(IconConfig::default())),
+            Err(error) => Err(error),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -277,6 +287,7 @@ mod tests {
             keywords: vec![],
             hotkey: None,
             pin: false,
+            icon: None,
             tags: vec![],
             os: [].into(),
             action: Action::Url { url: url.into() },

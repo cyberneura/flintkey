@@ -214,6 +214,8 @@ Undecided:
 ```
 ~/.config/flintkey/            The same on every OS (on Windows, %USERPROFILE%\.config\flintkey)
 ├── settings.yaml
+├── icons.yaml                 Named icons and tag icons (optional)
+├── icons/                     Images that icon values refer to by relative path (optional)
 └── commands/
     ├── open-github.yaml       One command per file. The file name (without the extension) is the id
     └── deploy-blog.yaml
@@ -260,6 +262,7 @@ Common keys:
 | `title` | Required | The name shown in the list |
 | `enabled` | | `false` (or `0`) turns the command off without deleting its file: it is not listed in the launcher, its hotkey is not registered, and it does not count when checking for overlapping hotkeys. Default `true` |
 | `type` | Required | `url` / `app` / `script` / `terminal` |
+| `icon` | | The icon shown in the launcher: a path, a URL or a named icon. See [Icons](#icons) |
 | `keyword` | | A short word that is chosen first when typed as an exact match. For aliases, use a list (`[today, 今日]`) |
 | `hotkey` | | A global shortcut that runs this command without showing the window (format below) |
 | `pin` | | If `true`, the command is listed first when the search field is empty |
@@ -402,6 +405,68 @@ Commands that do not match are not shown. Symbols in the input such as `!` and `
 
 Usage counts are kept in `usage.json` in the state folder.
 
+## Icons
+
+Every row of the launcher shows an icon. The first of these that loads is shown:
+
+1. The command's own `icon`.
+2. For `type: url`, the site's favicon; for `type: app`, the app's icon.
+3. The icon of the command's first tag that has one (`tags` in `icons.yaml`).
+4. The icon of the command's type (built into the app: globe, tiles, code brackets, terminal).
+
+While a better icon is still loading, a lower one is not shown (it would flash and be replaced); the type icon
+stands in.
+
+An icon value (a command's `icon`, a tag's icon in `icons.yaml`) is one of:
+
+| Written as | Meaning |
+|---|---|
+| `https://…` or `http://…` | An image on the web |
+| `/full/path.png`, `~/path.png` | A file anywhere |
+| A name defined in `icons.yaml` | That icon |
+| Anything else (`work.png`, `sites/docs.svg`) | A file in the `icons` folder of the configuration folder. `..` and `.` are refused, and a link in the folder that leads outside it is not followed |
+
+Names are looked up before paths, so a name hides a file of the same name in the `icons` folder.
+
+`icons.yaml`:
+
+```yaml
+icons:                          # named icons, for a picture used by several commands or tags
+  - name: work
+    path: work/briefcase.svg    # same rules as an icon value, except it cannot be another name
+  - name: wiki
+    url: https://wiki.example.com/logo.png
+tags:                           # tag → icon value
+  work: work
+  web: globe.png
+```
+
+They are called named icons: an icon value can be the name instead of the path or URL. A problem in `icons.yaml` is
+shown like other configuration problems, and only costs the icons it defines.
+
+Formats: PNG, JPEG, GIF, WebP, ICO, BMP and SVG, up to 2 MB. A file or response that is not one of these (an HTML
+error page, for example) counts as not loading.
+
+Loading:
+
+- App icons are drawn by the system (`NSWorkspace`), so icons kept in an asset catalog work.
+- Favicons: the root page of the site (`scheme://host:port/`) is fetched, never the command's own URL (opening it
+  may do something, such as signing out). The `<link rel="icon">` / `apple-touch-icon` it declares are tried,
+  scalable and larger first, then `/favicon.ico`. An icon link to another host that is `localhost`, `*.local` or a
+  loopback, private, link-local or other non-public address (including one written as an IPv4-mapped IPv6 address)
+  is not followed, so a page cannot make the app send requests into the local network. Redirects are followed one
+  hop at a time (at most 5) and each hop is checked the same way. For a host other than the site's, the name is
+  resolved first, refused if any address is not public, and the connection is pinned to the checked address
+  (`curl --resolve`), so the name cannot resolve differently in between. URLs with credentials are refused. A favicon is looked up only when its row is shown; this sends a request to the site of every
+  `type: url` command that appears in the list.
+- Images from the web (favicons and `https://` icons) are fetched with `curl` (5 second limit) and kept in
+  `icon-cache/` in the state folder. They are fetched again after 7 days; until that succeeds the old one is shown.
+- A picture that does not load is not tried again for 5 minutes. Changing a file in the configuration folder
+  forgets local images and failures, so a replaced image or a fixed value shows at once.
+- Fetching and drawing happen off the main thread, so typing never waits for an icon.
+
+The settings window has an Icon field for commands. Named icons and tag icons are edited in `icons.yaml`.
+
 ## App search
 
 On macOS, installed apps are searched along with the commands, without a command file for each
@@ -419,8 +484,7 @@ On macOS, installed apps are searched along with the commands, without a command
 - An app that a command opens without arguments (`app:` naming it or its path) is not listed separately, so it does
   not appear twice. A command that passes arguments does not hide the app.
 - An app's id is `app:` followed by its path. Usage counts are kept by that id, like a command's.
-- Rows for apps, and for `type: app` commands whose app is found, show the app's icon. The icon is drawn by the
-  system (`NSWorkspace`), so icons kept in an asset catalog work, and is cached for as long as the app runs.
+- Rows for apps, and for `type: app` commands whose app is found, show the app's icon (see [Icons](#icons)).
 
 Windows and Linux have no app search.
 

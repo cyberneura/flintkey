@@ -34,6 +34,8 @@ export interface CommandForm {
   cwd: string;
   env: [string, string][];
   pin: boolean;
+  /** Empty means no icon of its own. */
+  icon: string;
   tags: string[];
   os: string[];
 }
@@ -70,6 +72,7 @@ export const emptyCommand = (): CommandForm => ({
   cwd: '',
   env: [],
   pin: false,
+  icon: '',
   tags: [],
   os: [],
 });

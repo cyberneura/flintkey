@@ -596,6 +596,15 @@
             />
           </div>
 
+          <label class="flex flex-col gap-1">
+            <span class={label}>Icon</span>
+            <span class="text-xs text-zinc-500">
+              A file in the icons folder (<code>work.png</code>), a full path, a URL, or a name from
+              <code>icons.yaml</code>. Empty: the site's or app's icon, then the tag's.
+            </span>
+            <input data-annotate="command-icon" class="{input} font-mono" bind:value={form.icon} />
+          </label>
+
           <label class="flex items-center gap-2 text-sm text-zinc-300">
             <input type="checkbox" data-annotate="command-pin" bind:checked={form.pin} />
             Pin to the top of the list when nothing is typed
