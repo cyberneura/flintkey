@@ -146,14 +146,21 @@ A white background is never shown, not even for a moment.
 
 ### When things are reloaded
 
-The configuration folder is not watched. It is reloaded each time the window is shown.
+The configuration folder is watched (`apps/desktop/src-tauri/src/watch.rs`, with the `notify` crate). When
+`settings.yaml` or a file in `commands/` changes, whether from an editor, `git pull` or the settings window, the app
+loads the files again, registers the hotkeys again, and refreshes the open windows. Nothing has to be reopened.
 
-- `settings.yaml`: just before showing the window.
-- `commands/*.yaml` and usage counts: just after showing the window (with several hundred commands, it would affect the time until the window appears).
-- Hotkeys (both the launcher's and the commands'): registered again at startup, just after the commands are reloaded,
-  and after every save in the settings window. After changing a hotkey by editing a file, the new hotkey does not
-  work until the window has been shown once.
-  If the launcher's hotkey was changed, show the window with the old hotkey or from the tray menu.
+- Changes are applied once the folder has been quiet for 300 ms, so a save that touches a file several times, or a
+  pull that changes hundreds of files, is loaded once.
+- Hidden files (the app's own temporary files, editor swap files), files in subfolders and other files are ignored,
+  as they are when loading.
+- A configuration folder reached through a symlink (for example kept in a Git checkout) is watched at its real path.
+  A `settings.yaml` or command file that is itself a symlink to a file outside the folder is not watched.
+- The folder and its `commands` folder are created at startup if they are missing, so they can be watched.
+- If watching cannot start, a notice says so and the files are still loaded each time the launcher is shown.
+
+The files are also loaded again each time the launcher is shown (`settings.yaml` just before, `commands/*.yaml` and
+usage counts just after, since with several hundred commands loading would delay the window).
 
 When hotkeys overlap, the launcher's takes priority, and between commands the one that comes first by id is used.
 Different spellings of the same key combination count as an overlap (`Ctrl+Alt+C` and `ctrl+alt+KeyC`).
@@ -500,5 +507,6 @@ Protecting the files:
 
 Limitations:
 
-- The configuration folder is not watched. The window reloads the files each time it is shown, not while it is open.
+- The window reloads when the files change on disk. Unsaved edits are kept, and a banner says the files changed;
+  if the edited file was one of them, Save is refused and Revert loads it again.
 - Renaming a command (its file) is not supported in the window.

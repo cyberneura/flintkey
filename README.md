@@ -6,6 +6,7 @@ Supported OSes are macOS (primary) and Windows. The design is in [docs/design.md
 
 It stays in the menu bar (the system tray on Windows) and opens an input window with a hotkey (`alt+space` by default).
 Settings can be edited in the settings window (tray menu → Settings…, or ⌘, in the launcher) or directly as YAML files.
+Changes to the files (an editor, `git pull`) take effect immediately.
 There is no plugin support yet.
 
 ## Example settings

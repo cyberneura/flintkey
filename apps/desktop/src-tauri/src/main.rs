@@ -11,6 +11,7 @@ mod placement;
 mod session;
 mod settings_ui;
 mod showing;
+mod watch;
 
 use flintkey_core::Os;
 use flintkey_core::launch::{self, Plan};
@@ -38,6 +39,24 @@ const WINDOW_SIZE: (f64, f64) = (720.0, 480.0);
 const EVENT_SHOWN: &str = "launcher-shown";
 const EVENT_HIDDEN: &str = "launcher-hidden";
 const EVENT_SETTINGS_SHOWN: &str = "settings-shown";
+/// Sent to every window after the configuration files changed on disk and were loaded again.
+const EVENT_CONFIG_CHANGED: &str = "config-changed";
+
+/// Keeps the configuration folder watched for as long as the app runs.
+struct ConfigWatcher {
+    _watcher: notify::RecommendedWatcher,
+}
+
+/// The configuration files changed on disk: load them again, register the hotkeys again, and tell the windows.
+/// Can be called from any thread.
+fn config_changed(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        handle.state::<AppState>().session.lock().unwrap().reload_settings();
+        sync_hotkeys(&handle);
+        let _ = handle.emit(EVENT_CONFIG_CHANGED, ());
+    });
+}
 
 struct AppState {
     session: Mutex<Session>,
@@ -521,6 +540,23 @@ fn main() {
             build_tray(app.handle())?;
             app.state::<AppState>().session.lock().unwrap().reload_settings();
             sync_hotkeys(app.handle());
+            let config_dir = app
+                .state::<AppState>()
+                .session
+                .lock()
+                .unwrap()
+                .config_dir()
+                .to_path_buf();
+            let handle = app.handle().clone();
+            match watch::start(&config_dir, move || config_changed(&handle)) {
+                Ok(watcher) => {
+                    app.manage(ConfigWatcher { _watcher: watcher });
+                }
+                Err(error) => app.state::<AppState>().notices.lock().unwrap().push(format!(
+                    "{} is not watched ({error}); changes are picked up when the launcher is shown",
+                    config_dir.display()
+                )),
+            }
             // Without a working launcher hotkey the user has no obvious way to open the window, so tell them up front.
             if !app.state::<AppState>().hotkeys.lock().unwrap().has_launcher() {
                 show_launcher(app.handle(), Focus::Leave);

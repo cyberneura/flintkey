@@ -10,14 +10,18 @@
   let pane = $state<'general' | 'commands'>('general');
   let os = $state<Os>('macos');
   let reloadKey = $state(0);
+  /** Counts changes of the configuration files on disk. */
+  let changedKey = $state(0);
   let commandsPane: CommandsPane | undefined = $state();
 
   onMount(() => {
     api.settingsPage().then((page) => (os = page.os)).catch(() => {});
     const shown = listen('settings-shown', () => reloadKey++);
+    const changed = listen('config-changed', () => changedKey++);
     const failed = listen<string>('settings-try-failed', (event) => commandsPane?.showTryFailure(event.payload));
     return () => {
       shown.then((stop) => stop());
+      changed.then((stop) => stop());
       failed.then((stop) => stop());
     };
   });
@@ -57,10 +61,10 @@
   <main class="min-w-0 flex-1 overflow-hidden p-6">
     <!-- Both stay mounted so switching panes keeps unsaved edits. -->
     <div class="h-full overflow-y-auto" class:hidden={pane !== 'general'}>
-      <GeneralPane {reloadKey} />
+      <GeneralPane {reloadKey} {changedKey} />
     </div>
     <div class="h-full" class:hidden={pane !== 'commands'}>
-      <CommandsPane bind:this={commandsPane} {os} {reloadKey} />
+      <CommandsPane bind:this={commandsPane} {os} {reloadKey} {changedKey} />
     </div>
   </main>
 </div>

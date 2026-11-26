@@ -4,7 +4,9 @@
   import HotkeyPicker from './HotkeyPicker.svelte';
   import Problems from './Problems.svelte';
 
-  let { reloadKey }: { reloadKey: number } = $props();
+  let { reloadKey, changedKey }: { reloadKey: number; changedKey: number } = $props();
+  /** The files changed on disk while there were unsaved edits here. */
+  let changedWhileEditing = $state(false);
 
   let page = $state<SettingsPage | null>(null);
   let form = $state<SettingsForm>({ hotkey: '', display: 'cursor', terminal: null });
@@ -20,6 +22,7 @@
   );
 
   function show(loaded: SettingsPage) {
+    changedWhileEditing = false;
     page = loaded;
     form = { ...loaded.form };
     source = loaded.source;
@@ -30,20 +33,41 @@
     }
   }
 
-  async function load() {
+  /**
+   * `background`: a reload the user did not ask for. Its answer is dropped if the user edited meanwhile, so it
+   * never replaces what they typed.
+   */
+  async function load(background = false) {
+    const before = JSON.stringify([form, source, editingSource]);
     try {
-      show(await api.settingsPage());
+      const loaded = await api.settingsPage();
+      if (background && JSON.stringify([form, source, editingSource]) !== before) {
+        return;
+      }
+      show(loaded);
     } catch (error) {
       problems = problemsOf(error);
     }
   }
 
-  // Reload whenever the window is shown again: the files may have changed meanwhile.
-  // Unsaved edits are kept; Revert loads the file again.
+  // Reload whenever the window is shown again or the files change on disk. Unsaved edits are kept (Revert loads
+  // the file again); a change on disk under them is pointed out.
   $effect(() => {
     void reloadKey;
     untrack(() => {
-      if (!dirty) load();
+      if (!dirty) load(true);
+    });
+  });
+
+  $effect(() => {
+    void changedKey;
+    untrack(() => {
+      if (changedKey === 0) return;
+      if (dirty) {
+        changedWhileEditing = true;
+      } else {
+        load(true);
+      }
     });
   });
 
@@ -97,6 +121,13 @@
 
     <Problems {problems} />
 
+    {#if changedWhileEditing}
+      <div class="rounded-md border border-amber-700 bg-amber-950/60 px-3 py-2 text-sm text-amber-100">
+        The configuration files changed on disk while you were editing. If this file changed, Save will be refused;
+        Revert loads it again.
+      </div>
+    {/if}
+
     {#if editingSource}
       <textarea
         data-annotate="general-yaml"
@@ -113,7 +144,7 @@
           value={form.hotkey}
           os={page.os}
           launcher
-          epoch={reloadKey}
+          epoch={reloadKey + changedKey}
           onchange={(value) => (form.hotkey = value)}
         />
       </section>
