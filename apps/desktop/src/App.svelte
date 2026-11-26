@@ -50,6 +50,13 @@
     icons.load(rows.flatMap((row) => row.icons));
   });
 
+  /** An image that arrived but cannot be drawn (a truncated PNG, a broken SVG): fall back to the next icon. */
+  function markUndecodable(url: string) {
+    for (const [key, state] of Object.entries(iconStates)) {
+      if (state === url) iconStates[key] = 'failed';
+    }
+  }
+
   // Number of the current showing (0 while hidden). Sent with run requests so the app can match it against
   // the current showing. Prevents actions from a previous showing from running after the window reopens.
   let showing = 0;
@@ -212,7 +219,13 @@
           >
             <div class="flex size-8 shrink-0 items-center justify-center">
               {#if picture}
-                <img src={picture} alt="" class="size-8 object-contain" draggable="false" />
+                <img
+                  src={picture}
+                  alt=""
+                  class="size-8 object-contain"
+                  draggable="false"
+                  onerror={() => markUndecodable(picture)}
+                />
               {:else}
                 <TypeIcon kind={row.kind} />
               {/if}

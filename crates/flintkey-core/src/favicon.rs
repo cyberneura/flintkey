@@ -20,10 +20,43 @@ pub fn site_root(url: &str) -> Option<String> {
 /// links, or redirects, to make the app send requests to such addresses on its behalf. Every redirect hop is checked
 /// too. (A host name that resolves to a local address is not caught here.)
 pub fn may_request(url: &str, site: &str) -> bool {
-    match (Url::parse(url), Url::parse(site)) {
-        (Ok(url), Ok(site)) => matches!(url.scheme(), "http" | "https") && may_follow(&url, &site),
-        _ => false,
+    checked(url, site).is_some()
+}
+
+/// A request that passed [`may_request`], in the form to send: the URL as the check understood it, and, for a host
+/// other than the site's, the host and port whose resolved addresses must be checked with [`is_public`] (and the
+/// connection pinned to them) before sending.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Checked {
+    pub url: String,
+    pub resolve: Option<(String, u16)>,
+}
+
+/// Parses `url` once and checks it against `site`; the caller sends exactly [`Checked::url`]. URLs with credentials
+/// are refused.
+pub fn checked(url: &str, site: &str) -> Option<Checked> {
+    let (url, site) = (Url::parse(url).ok()?, Url::parse(site).ok()?);
+    if !matches!(url.scheme(), "http" | "https") || !url.username().is_empty() || url.password().is_some() {
+        return None;
     }
+    if !may_follow(&url, &site) {
+        return None;
+    }
+    let resolve = match url.host() {
+        Some(Host::Domain(domain)) if !same_host(&url, &site) => {
+            Some((domain.to_string(), url.port_or_known_default()?))
+        }
+        _ => None,
+    };
+    Some(Checked {
+        url: url.to_string(),
+        resolve,
+    })
+}
+
+/// Whether `ip` is an address outside this machine and the local network.
+pub fn is_public(ip: IpAddr) -> bool {
+    public(ip)
 }
 
 fn may_follow(candidate: &Url, page: &Url) -> bool {
@@ -327,6 +360,24 @@ mod tests {
         ));
         assert!(!may_request("file:///etc/hosts", "https://example.com/"));
         assert!(may_request("http://10.0.0.5/own.png", "http://10.0.0.5/"));
+    }
+
+    #[test]
+    fn a_checked_request_is_sent_as_parsed_and_other_hosts_are_resolved_first() {
+        // Act
+        let other = checked("https://CDN.example.net:8443/a b.png", "https://example.com/").unwrap();
+        let own = checked("https://example.com/i.png", "https://example.com/").unwrap();
+
+        // Assert
+        assert_eq!(other.url, "https://cdn.example.net:8443/a%20b.png");
+        assert_eq!(other.resolve, Some(("cdn.example.net".into(), 8443)));
+        assert_eq!(own.resolve, None);
+        assert_eq!(
+            checked("https://user:pw@cdn.example.net/a.png", "https://example.com/"),
+            None
+        );
+        assert!(!is_public("10.1.2.3".parse().unwrap()));
+        assert!(is_public("93.184.216.34".parse().unwrap()));
     }
 
     #[test]

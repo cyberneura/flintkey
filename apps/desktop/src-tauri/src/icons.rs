@@ -166,10 +166,12 @@ const MAX_REDIRECTS: usize = 5;
 fn download(url: &str, site: &str, max_bytes: u64) -> Option<Vec<u8>> {
     let mut url = url.to_string();
     for _ in 0..=MAX_REDIRECTS {
-        if !favicon::may_request(&url, site) {
-            return None;
-        }
-        let (status, location, body) = request(&url, max_bytes)?;
+        let checked = favicon::checked(&url, site)?;
+        let pinned = match &checked.resolve {
+            Some((host, port)) => Some(public_address(host, *port)?),
+            None => None,
+        };
+        let (status, location, body) = request(&checked.url, pinned.as_deref(), max_bytes)?;
         match status {
             200..=299 => return (!body.is_empty() && body.len() as u64 <= max_bytes).then_some(body),
             300..=399 if !location.is_empty() => url = location,
@@ -179,10 +181,31 @@ fn download(url: &str, site: &str, max_bytes: u64) -> Option<Vec<u8>> {
     None
 }
 
+/// `host:port:address` for curl's `--resolve`, with an address of `host` that was checked to be public. `None` if
+/// the host does not resolve or any of its addresses is on this machine or the local network: the check and the
+/// connection then use the same address, so a name cannot resolve differently in between.
+fn public_address(host: &str, port: u16) -> Option<String> {
+    use std::net::ToSocketAddrs;
+    let addresses: Vec<_> = (host, port).to_socket_addrs().ok()?.collect();
+    if addresses.is_empty() || !addresses.iter().all(|address| favicon::is_public(address.ip())) {
+        return None;
+    }
+    let ip = addresses[0].ip();
+    let shown = if ip.is_ipv6() {
+        format!("[{ip}]")
+    } else {
+        ip.to_string()
+    };
+    Some(format!("{host}:{port}:{shown}"))
+}
+
 /// One GET without following redirects: the status, the absolute URL a redirect points to (empty if none) and the
 /// body.
-fn request(url: &str, max_bytes: u64) -> Option<(u16, String, Vec<u8>)> {
+fn request(url: &str, pinned: Option<&str>, max_bytes: u64) -> Option<(u16, String, Vec<u8>)> {
     let mut command = Command::new("curl");
+    if let Some(pinned) = pinned {
+        command.args(["--resolve", pinned]);
+    }
     command.args([
         "--silent",
         "--max-time",
