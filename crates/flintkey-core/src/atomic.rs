@@ -25,13 +25,13 @@ pub(crate) fn write_atomically(path: &Path, text: &str) -> io::Result<()> {
     // The new file would get the default permissions. Keep those of the file it replaces, so a file the user made
     // private (it may hold commands with secrets) does not become readable by others.
     let permissions = std::fs::metadata(path).ok().map(|metadata| metadata.permissions());
-    let replaced = file
-        .write_all(text.as_bytes())
-        .and_then(|()| match permissions {
-            Some(permissions) => file.set_permissions(permissions),
-            None => Ok(()),
-        })
-        .and_then(|()| std::fs::rename(&temporary, path));
+    // Set them before writing, so the content is never readable under the wider default permissions.
+    let replaced = match permissions {
+        Some(permissions) => file.set_permissions(permissions),
+        None => Ok(()),
+    }
+    .and_then(|()| file.write_all(text.as_bytes()))
+    .and_then(|()| std::fs::rename(&temporary, path));
     if replaced.is_err() {
         let _ = std::fs::remove_file(&temporary);
     }
