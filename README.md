@@ -8,6 +8,7 @@ It stays in the menu bar (the system tray on Windows) and opens an input window 
 Settings can be edited in the settings window (tray menu → Settings…, or ⌘, in the launcher) or directly as YAML files.
 Changes to the files (an editor, `git pull`) take effect immediately.
 On macOS, installed apps can be searched and opened too, with their icons, without writing a command for each.
+Rows show the command's own icon, the site's favicon or app's icon, the tag's icon, or a default icon for the type.
 There is no plugin support yet.
 
 ## Example settings
@@ -23,6 +24,7 @@ run: fab deploy
 cwd: ~/workspace/blog
 env:
   GITHUB_TOKEN: op://Private/GitHub/token   # resolved with the 1Password CLI at run time
+icon: blog.png                              # from ~/.config/flintkey/icons/; a URL or full path also works
 tags: [personal]                            # for grouping in the settings UI
 ```
 

@@ -1,6 +1,6 @@
 //! The command model and the rules a command file must follow.
 //!
-//! A command file is flat YAML with common keys (`title` `keyword` `hotkey` `pin` `tags` `when`) and
+//! A command file is flat YAML with common keys (`title` `keyword` `hotkey` `pin` `icon` `tags` `when`) and
 //! per-`type` keys. It is read into a mirror struct whose fields are all `Option`, so every
 //! rule violation is reported with its line number instead of stopping at serde's first error.
 
@@ -22,6 +22,9 @@ pub struct Command {
     pub hotkey: Option<String>,
     /// Pinned commands come first when the search field is empty.
     pub pin: bool,
+    /// The icon shown in the launcher, as written: a path, a URL or the name of an icon in `icons.yaml`.
+    /// Resolved by [`crate::icon::resolve`].
+    pub icon: Option<String>,
     /// Labels for filtering and grouping in the settings UI. In written order. Not searched.
     pub tags: Vec<String>,
     /// The OSes this command appears on. Empty means all.
@@ -118,6 +121,7 @@ struct RawCommand {
     title: Option<Spanned<String>>,
     keyword: Option<Spanned<OneOrMany>>,
     hotkey: Option<Spanned<String>>,
+    icon: Option<Spanned<String>>,
     tags: Option<Spanned<OneOrMany>>,
     #[serde(rename = "type")]
     kind: Option<Spanned<String>>,
@@ -348,6 +352,7 @@ pub fn parse_command(source: &str) -> Result<Command, Vec<Diagnostic>> {
         &mut problems,
     );
     let hotkey = non_blank("hotkey", raw.hotkey, &mut problems);
+    let icon = non_blank("icon", raw.icon, &mut problems);
     let tags = non_blank_list("tags", raw.tags.map(|value| as_written(value, source)), &mut problems);
 
     let kind = match &raw.kind {
@@ -480,6 +485,7 @@ pub fn parse_command(source: &str) -> Result<Command, Vec<Diagnostic>> {
             keywords,
             hotkey,
             pin: raw.pin.is_some_and(|pin| pin.value.0),
+            icon,
             tags,
             os,
             action,
@@ -535,6 +541,7 @@ when:
                 keywords: vec!["deploy".into(), "blog".into()],
                 hotkey: Some("ctrl+alt+cmd+d".into()),
                 pin: true,
+                icon: None,
                 tags: vec!["blog".into(), "公開".into()],
                 os: [Os::Macos, Os::Windows].into(),
                 action: Action::Script {

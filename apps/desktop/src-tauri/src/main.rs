@@ -21,7 +21,7 @@ use flintkey_core::secrets::OnePassword;
 use hotkeys::{Registered, Target};
 use placement::{Monitor, Position, Rect};
 use serde::Serialize;
-use session::{Row, Session};
+use session::{IconRef, Row, Session};
 use showing::Showing;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -53,6 +53,7 @@ struct ConfigWatcher {
 /// The configuration files changed on disk: load them again, register the hotkeys again, and tell the windows.
 /// Can be called from any thread.
 fn config_changed(app: &AppHandle) {
+    app.state::<AppState>().icons.forget_local();
     app.state::<AppState>().session.lock().unwrap().reload_settings();
     reload_in_background(app, EVENT_CONFIG_CHANGED);
 }
@@ -63,7 +64,7 @@ struct AppState {
     /// Failures that happened after the window was hidden. Shown the next time the window appears.
     notices: Mutex<Vec<String>>,
     showing: Mutex<Showing>,
-    icons: icons::IconCache,
+    icons: icons::Icons,
     /// Whether the window is the target of keyboard input.
     has_key: AtomicBool,
     /// Whether the window could be turned into a panel that receives keyboard input.
@@ -141,14 +142,17 @@ fn search(state: State<'_, AppState>, query: String) -> Vec<Row> {
     state.session.lock().unwrap().search(&query)
 }
 
-/// The icon of the app bundle at `path` (a row's `icon`), as PNG bytes.
-#[tauri::command(async)]
-fn app_icon(state: State<'_, AppState>, path: String) -> Result<tauri::ipc::Response, String> {
-    if !path.ends_with(".app") {
-        return Err(format!("`{path}` is not an app"));
-    }
-    let png = state.icons.png(&path).ok_or_else(|| format!("no icon for `{path}`"))?;
-    Ok(tauri::ipc::Response::new(png))
+/// The image of one of a row's `icons` (PNG, ICO, SVG, …). May fetch it from the web, so it runs on a thread of
+/// its own rather than on the shared async workers.
+#[tauri::command]
+async fn icon(app: AppHandle, icon: IconRef) -> Result<tauri::ipc::Response, String> {
+    let wanted = icon.clone();
+    let image = tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().icons.image(&wanted))
+        .await
+        .map_err(|error| error.to_string())?;
+    image
+        .map(tauri::ipc::Response::new)
+        .ok_or_else(|| format!("no image for {icon:?}"))
 }
 
 /// Runs a command. If no plan can be made, returns the error and keeps the window open.
@@ -546,11 +550,11 @@ fn main() {
     let config_dir = paths::config_dir().expect("the user has a home directory");
     let state_dir = paths::state_dir().expect("the user has a home directory");
     let state = AppState {
-        session: Mutex::new(Session::new(config_dir, &state_dir, home, Os::current())),
+        session: Mutex::new(Session::new(config_dir.clone(), &state_dir, home, Os::current())),
         hotkeys: Mutex::new(Registry::default()),
         notices: Mutex::new(Vec::new()),
         showing: Mutex::new(Showing::default()),
-        icons: icons::IconCache::default(),
+        icons: icons::Icons::new(state_dir.join("icon-cache"), config_dir.clone()),
         has_key: AtomicBool::new(false),
         #[cfg(target_os = "macos")]
         panel: AtomicBool::new(false),
@@ -580,7 +584,7 @@ fn main() {
             open_session,
             refresh,
             search,
-            app_icon,
+            icon,
             run,
             hide,
             settings_ui::settings_page,

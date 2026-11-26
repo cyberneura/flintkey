@@ -1108,7 +1108,7 @@ dependencies = [
 
 [[package]]
 name = "flintkey-core"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "nucleo-matcher",
  "open",
@@ -1117,12 +1117,13 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "url",
  "yaml-edit",
 ]
 
 [[package]]
 name = "flintkey-desktop"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "flintkey-core",
  "notify",

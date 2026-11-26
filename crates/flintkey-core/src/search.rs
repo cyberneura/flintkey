@@ -95,6 +95,7 @@ mod tests {
                     .unwrap_or_default(),
                 hotkey: None,
                 pin,
+                icon: None,
                 tags: vec![],
                 os: [].into(),
                 action: Action::Url {

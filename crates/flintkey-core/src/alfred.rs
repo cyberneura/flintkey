@@ -258,6 +258,7 @@ pub fn convert(workflows: &[Workflow]) -> Conversion {
                 keywords: draft.keywords,
                 hotkey: draft.hotkey,
                 pin: false,
+                icon: None,
                 tags: vec![workflow.name.clone()],
                 os: if draft.macos_only {
                     [Os::Macos].into()
@@ -744,6 +745,7 @@ mod tests {
                     keywords: vec!["tickets".into(), "チケット".into()],
                     hotkey: None,
                     pin: false,
+                    icon: None,
                     tags: vec!["Work/URLs".into()],
                     os: [].into(),
                     action: Action::Url {

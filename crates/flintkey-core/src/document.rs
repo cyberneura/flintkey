@@ -66,6 +66,9 @@ fn fields(command: &Command) -> Fields {
     if command.pin {
         out.push(("pin", Node::Flag(true)));
     }
+    if let Some(icon) = &command.icon {
+        out.push(("icon", Node::Text(icon.clone())));
+    }
     if !command.tags.is_empty() {
         out.push(("tags", Node::List(command.tags.clone())));
     }
@@ -402,6 +405,7 @@ env:
             keywords: vec!["deploy".into()],
             hotkey: None,
             pin: false,
+            icon: None,
             tags: vec![],
             os: [].into(),
             action: Action::Script {
@@ -433,6 +437,7 @@ env:
             keywords: vec!["deploy".into()],
             hotkey: None,
             pin: true,
+            icon: None,
             tags: vec![],
             os: [Os::Macos, Os::Windows].into(),
             action: Action::Script {
@@ -474,6 +479,7 @@ when:
             keywords: vec!["今日".into(), "today".into()],
             hotkey: Some("ctrl+alt+cmd+t".into()),
             pin: false,
+            icon: None,
             tags: vec!["個人/コマンド".into()],
             os: [Os::Macos].into(),
             action: Action::App {
@@ -516,6 +522,7 @@ when:
             keywords: words.clone(),
             hotkey: None,
             pin: false,
+            icon: None,
             tags: words,
             os: [].into(),
             action: Action::Url {
@@ -573,6 +580,31 @@ when:
     }
 
     #[test]
+    fn an_icon_is_written_after_pin_and_removed_when_cleared() {
+        // Arrange
+        let source = "title: A\ntype: url\nurl: https://example.com\npin: true\ntags: work\n";
+        let mut command = parse_command(source).unwrap();
+        command.icon = Some("work/briefcase.svg".into());
+
+        // Act
+        let with_icon = update(source, &command);
+        command.icon = None;
+        let without = update(&with_icon.text, &command);
+
+        // Assert
+        assert!(with_icon.kept_formatting);
+        assert_eq!(
+            with_icon.text,
+            "title: A\ntype: url\nurl: https://example.com\npin: true\nicon: work/briefcase.svg\ntags: work\n"
+        );
+        assert_eq!(
+            parse_command(&with_icon.text).unwrap().icon.as_deref(),
+            Some("work/briefcase.svg")
+        );
+        assert_eq!(without.text, source);
+    }
+
+    #[test]
     fn enabled_written_by_hand_as_zero_is_changed_where_it_stands() {
         // Arrange
         let source = "title: A\ntype: url\nurl: https://example.com\nenabled: 0   # broken for now\n";
@@ -600,6 +632,7 @@ when:
                 keywords: vec![text.into()],
                 hotkey: None,
                 pin: false,
+                icon: None,
                 tags: vec![],
                 os: [].into(),
                 action: Action::Script {
@@ -649,6 +682,7 @@ when:
                 keywords: vec![],
                 hotkey: None,
                 pin: false,
+                icon: None,
                 tags: vec![],
                 os: [Os::Linux].into(),
                 action,
@@ -1026,6 +1060,7 @@ when:
             keywords: vec![],
             hotkey: None,
             pin: false,
+            icon: None,
             tags: vec![],
             os: [].into(),
             action: Action::Url {

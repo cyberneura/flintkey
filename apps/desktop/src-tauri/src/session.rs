@@ -2,13 +2,14 @@
 //! plans runs.
 
 use flintkey_core::apps::{self, InstalledApp};
+use flintkey_core::icon::{self, ICONS_FILE, IconConfig, IconSource};
 use flintkey_core::launch::{self, Machine, Plan};
 use flintkey_core::search::Searcher;
 use flintkey_core::settings::Settings;
 use flintkey_core::store::{LoadedCommands, Store, StoredCommand};
 use flintkey_core::usage::{USAGE_FILE, Usage};
 use flintkey_core::{Action, Os};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 const SETTINGS_FILE: &str = "settings.yaml";
@@ -27,8 +28,40 @@ pub struct Row {
     pub kind: &'static str,
     /// One line describing what happens (URL, app name, command).
     pub detail: String,
-    /// The app bundle whose icon the row shows: the app itself, or the app a command opens.
-    pub icon: Option<String>,
+    /// The pictures to show, best first: the command's own icon, the site's favicon or the app's icon, then the
+    /// icon of its tag. The page shows the first one that loads, or the icon of `kind` if none does.
+    pub icons: Vec<IconRef>,
+}
+
+/// One picture a row can show. The page passes it back to the `icon` command to get the image.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum IconRef {
+    /// The icon of an app bundle, drawn by the system.
+    App {
+        path: String,
+    },
+    File {
+        path: String,
+    },
+    Url {
+        url: String,
+    },
+    /// The icon of the site of a page.
+    Favicon {
+        url: String,
+    },
+}
+
+impl From<IconSource> for IconRef {
+    fn from(source: IconSource) -> Self {
+        match source {
+            IconSource::File(path) => IconRef::File {
+                path: path.display().to_string(),
+            },
+            IconSource::Url(url) => IconRef::Url { url },
+        }
+    }
 }
 
 pub struct Session {
@@ -40,10 +73,14 @@ pub struct Session {
     settings_problems: Vec<String>,
     commands: Vec<StoredCommand>,
     command_problems: Vec<String>,
+    icon_config: IconConfig,
+    icon_problems: Vec<String>,
     app_folders: Vec<PathBuf>,
     apps: Vec<InstalledApp>,
     /// `commands`, then the installed apps no command already opens. What is searched and run.
     entries: Vec<StoredCommand>,
+    /// The icons of each of `entries`, best first.
+    entry_icons: Vec<Vec<IconRef>>,
     /// The number of the last reading started, and of the last one applied. Readings run on other threads and can
     /// finish out of order; one started before the applied one read older files and is dropped.
     readings_started: u64,
@@ -63,6 +100,7 @@ pub struct Reading {
 /// What [`Reading::read`] found, for [`Session::apply`].
 pub struct Read {
     number: u64,
+    icons: std::io::Result<Result<IconConfig, Vec<flintkey_core::Diagnostic>>>,
     commands: std::io::Result<LoadedCommands>,
     usage: Usage,
     apps: Vec<InstalledApp>,
@@ -73,6 +111,7 @@ impl Reading {
     pub fn read(&self) -> Read {
         Read {
             number: self.number,
+            icons: self.store.load_icons(),
             commands: self.store.load_commands(),
             usage: Usage::load(&self.usage_path),
             apps: apps::scan(&self.app_folders),
@@ -96,9 +135,12 @@ impl Session {
             settings_problems: Vec::new(),
             commands: Vec::new(),
             command_problems: Vec::new(),
+            icon_config: IconConfig::default(),
+            icon_problems: Vec::new(),
             app_folders,
             apps: Vec::new(),
             entries: Vec::new(),
+            entry_icons: Vec::new(),
             readings_started: 0,
             reading_applied: 0,
             usage: Usage::default(),
@@ -169,6 +211,20 @@ impl Session {
         }
         self.reading_applied = read.number;
         self.command_problems.clear();
+        self.icon_problems.clear();
+        // A broken icons.yaml only costs the icons it defines, so it is not worth keeping the last good one.
+        self.icon_config = match read.icons {
+            Ok(Ok(config)) => config,
+            Ok(Err(problems)) => {
+                self.icon_problems
+                    .extend(problems.iter().map(|problem| format!("{ICONS_FILE}: {problem}")));
+                IconConfig::default()
+            }
+            Err(error) => {
+                self.icon_problems.push(format!("{ICONS_FILE}: {error}"));
+                IconConfig::default()
+            }
+        };
         self.usage = read.usage;
         self.apps = read.apps;
         match read.commands {
@@ -225,6 +281,7 @@ impl Session {
                     keywords: Vec::new(),
                     hotkey: None,
                     pin: false,
+                    icon: None,
                     tags: Vec::new(),
                     os: [].into(),
                     action: Action::App {
@@ -235,6 +292,46 @@ impl Session {
             })
             .collect::<Vec<_>>();
         self.entries = self.commands.iter().cloned().chain(found).collect();
+        let mut problems = Vec::new();
+        self.entry_icons = self
+            .entries
+            .iter()
+            .map(|stored| self.icons_of(stored, &mut problems))
+            .collect();
+        problems.dedup();
+        self.icon_problems.extend(problems);
+    }
+
+    /// The pictures for `stored`, best first. An icon value that cannot be used is reported in `problems`.
+    fn icons_of(&self, stored: &StoredCommand, problems: &mut Vec<String>) -> Vec<IconRef> {
+        let command = &stored.command;
+        let mut icons = Vec::new();
+        let mut resolve =
+            |value: &str, whose: String| match icon::resolve(value, &self.icon_config, self.store.root(), &self.home) {
+                Ok(source) => Some(IconRef::from(source)),
+                Err(problem) => {
+                    problems.push(format!("{whose}: {problem}"));
+                    None
+                }
+            };
+        if let Some(own) = &command.icon {
+            icons.extend(resolve(own, format!("commands/{}.yaml", stored.id)));
+        }
+        match &command.action {
+            Action::Url { url } if url.starts_with("https://") || url.starts_with("http://") => {
+                icons.push(IconRef::Favicon { url: url.clone() });
+            }
+            Action::App { app, .. } => {
+                icons.extend(apps::find(&self.apps, app, &self.home).map(|installed| IconRef::App {
+                    path: installed.path.display().to_string(),
+                }))
+            }
+            _ => {}
+        }
+        if let Some(tag_icon) = icon::tag_icon(&command.tags, &self.icon_config) {
+            icons.extend(resolve(tag_icon, ICONS_FILE.to_string()));
+        }
+        icons
     }
 
     /// Problems in the config files. Settings first, then commands.
@@ -242,6 +339,7 @@ impl Session {
         self.settings_problems
             .iter()
             .chain(&self.command_problems)
+            .chain(&self.icon_problems)
             .cloned()
             .collect()
     }
@@ -255,7 +353,7 @@ impl Session {
             .rank(&self.entries, &self.usage, query)
             .into_iter()
             .filter(|&index| !empty || index < commands)
-            .map(|index| row(&self.entries[index], &self.apps, &self.home))
+            .map(|index| row(&self.entries[index], &self.entry_icons[index]))
             .collect()
     }
 
@@ -292,12 +390,8 @@ impl Session {
     }
 }
 
-fn row(stored: &StoredCommand, apps: &[InstalledApp], home: &Path) -> Row {
+fn row(stored: &StoredCommand, icons: &[IconRef]) -> Row {
     let command = &stored.command;
-    let icon = match &command.action {
-        Action::App { app, .. } => apps::find(apps, app, home).map(|installed| installed.path.display().to_string()),
-        _ => None,
-    };
     let detail = match &command.action {
         Action::Url { url } => url.clone(),
         Action::App { app, args } => std::iter::once(app).chain(args).cloned().collect::<Vec<_>>().join(" "),
@@ -310,7 +404,7 @@ fn row(stored: &StoredCommand, apps: &[InstalledApp], home: &Path) -> Row {
         hotkey: command.hotkey.clone(),
         kind: command.action.type_name(),
         detail,
-        icon,
+        icons: icons.to_vec(),
     }
 }
 
@@ -385,7 +479,9 @@ mod tests {
                 hotkey: None,
                 kind: "url",
                 detail: "https://example.com".into(),
-                icon: None,
+                icons: vec![IconRef::Favicon {
+                    url: "https://example.com".into()
+                }],
             }
         );
         assert_eq!(
@@ -441,7 +537,7 @@ mod tests {
                 hotkey: None,
                 kind: "app",
                 detail: calculator.clone(),
-                icon: Some(calculator),
+                icons: vec![IconRef::App { path: calculator }],
             }]
         );
     }
@@ -505,7 +601,7 @@ mod tests {
             "{messenger_rows:?}"
         );
         assert_eq!(chat_rows[0].id, "chat");
-        assert_eq!(chat_rows[0].icon.as_deref(), Some(messenger.as_str()));
+        assert_eq!(chat_rows[0].icons, [IconRef::App { path: messenger }]);
         // A command that passes arguments does not hide the plain app.
         assert!(editor_rows.iter().any(|row| row.title == "Editor"), "{editor_rows:?}");
     }
@@ -526,6 +622,83 @@ mod tests {
 
         // Assert
         assert!(session.app_folders.is_empty());
+    }
+
+    #[test]
+    fn icons_come_in_order_own_then_favicon_or_app_then_tag() {
+        // Arrange
+        let fixture = Fixture::new();
+        fs::write(
+            fixture.dir.path().join("config/icons.yaml"),
+            "icons:\n  - name: star\n    url: https://example.com/star.png\ntags:\n  work: briefcase.svg\n",
+        )
+        .unwrap();
+        fixture.command(
+            "site",
+            "title: Site\ntype: url\nurl: https://example.com/a\nicon: star\ntags: [misc, work]\n",
+        );
+        fixture.command("deploy", "title: Deploy\ntype: script\nrun: fab deploy\ntags: work\n");
+        fixture.command("notes", "title: Notes\ntype: script\nrun: x\n");
+        let mut session = fixture.session(Os::Macos);
+        session.reload();
+        let mut icons = |id: &str| session.search("").into_iter().find(|row| row.id == id).unwrap().icons;
+        let briefcase = fixture
+            .dir
+            .path()
+            .join("config/icons/briefcase.svg")
+            .display()
+            .to_string();
+
+        // Act / Assert
+        assert_eq!(
+            icons("site"),
+            [
+                IconRef::Url {
+                    url: "https://example.com/star.png".into()
+                },
+                IconRef::Favicon {
+                    url: "https://example.com/a".into()
+                },
+                IconRef::File {
+                    path: briefcase.clone()
+                },
+            ]
+        );
+        assert_eq!(icons("deploy"), [IconRef::File { path: briefcase }]);
+        assert_eq!(icons("notes"), []);
+        assert!(session.problems().is_empty(), "{:?}", session.problems());
+    }
+
+    #[test]
+    fn unusable_icon_values_are_reported_and_left_out() {
+        // Arrange
+        let fixture = Fixture::new();
+        fs::write(
+            fixture.dir.path().join("config/icons.yaml"),
+            "tags:\n  work: ../secret.png\n",
+        )
+        .unwrap();
+        fixture.command(
+            "deploy",
+            "title: Deploy\ntype: script\nrun: fab deploy\nicon: ../../x.png\ntags: work\n",
+        );
+        let mut session = fixture.session(Os::Macos);
+
+        // Act
+        session.reload();
+
+        // Assert
+        assert_eq!(session.search("")[0].icons, []);
+        let problems = session.problems();
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        assert!(
+            problems[0].starts_with("commands/deploy.yaml: icon `../../x.png`"),
+            "{problems:?}"
+        );
+        assert!(
+            problems[1].starts_with("icons.yaml: icon `../secret.png`"),
+            "{problems:?}"
+        );
     }
 
     #[test]
