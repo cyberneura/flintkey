@@ -89,6 +89,7 @@ mod tests {
             id: id.into(),
             command: Command {
                 title: title.into(),
+                enabled: true,
                 keywords: keyword
                     .map(|keyword| keyword.split('|').map(Into::into).collect())
                     .unwrap_or_default(),

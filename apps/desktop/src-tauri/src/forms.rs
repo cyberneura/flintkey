@@ -18,9 +18,10 @@ pub struct SettingsForm {
     pub terminal: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandForm {
     pub title: String,
+    pub enabled: bool,
     pub keywords: Vec<String>,
     pub hotkey: String,
     /// `url` / `app` / `script` / `terminal`.
@@ -37,6 +38,27 @@ pub struct CommandForm {
     pub tags: Vec<String>,
     /// OS names. Empty means every OS.
     pub os: Vec<String>,
+}
+
+impl Default for CommandForm {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            enabled: true,
+            keywords: Vec::new(),
+            hotkey: String::new(),
+            kind: String::new(),
+            url: String::new(),
+            app: String::new(),
+            args: Vec::new(),
+            run: String::new(),
+            cwd: String::new(),
+            env: Vec::new(),
+            pin: false,
+            tags: Vec::new(),
+            os: Vec::new(),
+        }
+    }
 }
 
 impl SettingsForm {
@@ -66,6 +88,7 @@ impl CommandForm {
     pub fn from_command(command: &Command) -> Self {
         let mut form = CommandForm {
             title: command.title.clone(),
+            enabled: command.enabled,
             keywords: command.keywords.clone(),
             hotkey: command.hotkey.clone().unwrap_or_default(),
             kind: command.action.type_name().to_string(),
@@ -141,6 +164,7 @@ impl CommandForm {
         }
         Ok(Command {
             title: self.title.clone(),
+            enabled: self.enabled,
             keywords: list(&self.keywords),
             hotkey: optional(&self.hotkey),
             pin: self.pin,
@@ -164,6 +188,7 @@ mod tests {
             "title: Editor\ntype: app\napp: Zed\nargs: [--new, ~/work]\nwhen:\n  os: [macos, linux]\n",
             "title: Deploy\ntype: script\nrun: |\n  fab deploy\ncwd: ~/blog\nenv:\n  A: op://Private/A/token\n  B: ''\n",
             "title: Logs\ntype: terminal\nrun: tail -f log\ncwd: /var/log\n",
+            "title: Off\nenabled: false\ntype: url\nurl: https://example.com\n",
         ];
 
         for source in sources {

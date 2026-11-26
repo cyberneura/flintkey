@@ -520,6 +520,7 @@ fn main() {
             settings_ui::command_save,
             settings_ui::command_save_source,
             settings_ui::command_delete,
+            settings_ui::command_set_enabled,
             settings_ui::command_try,
             settings_ui::reveal,
             settings_ui::open_keyboard_settings,

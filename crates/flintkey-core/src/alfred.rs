@@ -254,6 +254,7 @@ pub fn convert(workflows: &[Workflow]) -> Conversion {
             id,
             command: Command {
                 title,
+                enabled: true,
                 keywords: draft.keywords,
                 hotkey: draft.hotkey,
                 pin: false,
@@ -739,6 +740,7 @@ mod tests {
                 id: "tickets".into(),
                 command: Command {
                     title: "チケットを開く".into(),
+                    enabled: true,
                     keywords: vec!["tickets".into(), "チケット".into()],
                     hotkey: None,
                     pin: false,

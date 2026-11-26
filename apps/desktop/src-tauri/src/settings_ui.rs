@@ -192,7 +192,11 @@ pub fn hotkey_check(state: State<'_, AppState>, hotkey: String, launcher: bool, 
             .push("This is the launcher's hotkey; the launcher keeps it.".into());
     }
     if let Ok(loaded) = store.load_commands() {
-        for stored in loaded.commands.iter().filter(|stored| stored.command.applies_to(os)) {
+        for stored in loaded
+            .commands
+            .iter()
+            .filter(|stored| stored.command.enabled && stored.command.applies_to(os))
+        {
             if !launcher && Some(&stored.id) == id.as_ref() {
                 continue;
             }
@@ -242,6 +246,7 @@ pub struct CommandSummary {
     hotkey: Option<String>,
     tags: Vec<String>,
     os: Vec<String>,
+    enabled: bool,
     broken: bool,
 }
 
@@ -256,6 +261,7 @@ impl CommandSummary {
             hotkey: command.hotkey.clone(),
             tags: command.tags.clone(),
             os: command.os.iter().map(|os| os.name().to_string()).collect(),
+            enabled: command.enabled,
             broken: false,
         }
     }
@@ -280,6 +286,7 @@ pub fn commands_list(state: State<'_, AppState>) -> Result<Vec<CommandSummary>, 
         hotkey: None,
         tags: Vec::new(),
         os: Vec::new(),
+        enabled: true,
         broken: true,
     }));
     out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -407,6 +414,27 @@ pub fn command_save_source(
     }
     sync_hotkeys(&app);
     command_page_of(&state, &id)
+}
+
+/// Turns a command on or off from the list, changing only its `enabled` line.
+#[tauri::command]
+pub fn command_set_enabled(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    enabled: bool,
+) -> Result<(), Problems> {
+    {
+        let session = state.session.lock().unwrap();
+        let store = session.store();
+        let source = store.read_command_source(&id).map_err(problems)?;
+        let mut command =
+            parse_command(&source).map_err(|found| found.iter().map(ToString::to_string).collect::<Problems>())?;
+        command.enabled = enabled;
+        store.save_command(&id, &command).map_err(problems)?;
+    }
+    sync_hotkeys(&app);
+    Ok(())
 }
 
 #[tauri::command]

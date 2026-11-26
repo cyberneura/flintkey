@@ -28,6 +28,10 @@ type Fields = Vec<(&'static str, Node)>;
 /// The keys a command needs. Keys at their default value are left out.
 fn fields(command: &Command) -> Fields {
     let mut out: Fields = vec![("title", Node::Text(command.title.clone()))];
+    // Right after the title, so a disabled command is obvious when the file is opened.
+    if !command.enabled {
+        out.push(("enabled", Node::Flag(false)));
+    }
     if let Some(keywords) = one_or_many(&command.keywords) {
         out.push(("keyword", keywords));
     }
@@ -394,6 +398,7 @@ env:
     fn script(run: &str) -> Command {
         Command {
             title: "Deploy blog".into(),
+            enabled: true,
             keywords: vec!["deploy".into()],
             hotkey: None,
             pin: false,
@@ -424,6 +429,7 @@ env:
         // Arrange
         let command = Command {
             title: "Deploy blog".into(),
+            enabled: true,
             keywords: vec!["deploy".into()],
             hotkey: None,
             pin: true,
@@ -464,6 +470,7 @@ when:
         // Arrange
         let command = Command {
             title: "Today".into(),
+            enabled: true,
             keywords: vec!["今日".into(), "today".into()],
             hotkey: Some("ctrl+alt+cmd+t".into()),
             pin: false,
@@ -505,6 +512,7 @@ when:
         let words: Vec<String> = TRICKY.iter().map(ToString::to_string).collect();
         let command = Command {
             title: "T".into(),
+            enabled: true,
             keywords: words.clone(),
             hotkey: None,
             pin: false,
@@ -544,11 +552,51 @@ when:
     }
 
     #[test]
+    fn disabling_writes_one_line_under_the_title_and_enabling_removes_it() {
+        // Arrange
+        let source = "# mine\ntitle: A   # shown\nkeyword: a\ntype: url\nurl: https://example.com\n";
+        let mut command = parse_command(source).unwrap();
+        command.enabled = false;
+
+        // Act
+        let disabled = update(source, &command);
+        command.enabled = true;
+        let enabled = update(&disabled.text, &command);
+
+        // Assert
+        assert!(disabled.kept_formatting);
+        assert_eq!(
+            disabled.text,
+            "# mine\ntitle: A   # shown\nenabled: false\nkeyword: a\ntype: url\nurl: https://example.com\n"
+        );
+        assert_eq!(enabled.text, source);
+    }
+
+    #[test]
+    fn enabled_written_by_hand_as_zero_is_changed_where_it_stands() {
+        // Arrange
+        let source = "title: A\ntype: url\nurl: https://example.com\nenabled: 0   # broken for now\n";
+        let mut command = parse_command(source).unwrap();
+        assert!(!command.enabled);
+        command.title = "B".into();
+
+        // Act
+        let updated = update(source, &command);
+
+        // Assert: an unrelated edit leaves the hand-written `0` alone.
+        assert_eq!(
+            updated.text,
+            "title: B\ntype: url\nurl: https://example.com\nenabled: 0   # broken for now\n"
+        );
+    }
+
+    #[test]
     fn new_file_reads_back_as_the_same_command_for_tricky_text() {
         for text in TRICKY {
             // Arrange
             let command = Command {
                 title: text.into(),
+                enabled: true,
                 keywords: vec![text.into()],
                 hotkey: None,
                 pin: false,
@@ -597,6 +645,7 @@ when:
         for action in actions {
             let command = Command {
                 title: "T".into(),
+                enabled: true,
                 keywords: vec![],
                 hotkey: None,
                 pin: false,
@@ -973,6 +1022,7 @@ when:
         let source = "# notes\ntitle: A\ntype: nope\n";
         let command = Command {
             title: "A".into(),
+            enabled: true,
             keywords: vec![],
             hotkey: None,
             pin: false,

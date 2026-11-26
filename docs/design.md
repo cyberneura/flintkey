@@ -248,6 +248,7 @@ Common keys:
 | Key | Required | Description |
 |---|---|---|
 | `title` | Required | The name shown in the list |
+| `enabled` | | `false` (or `0`) turns the command off without deleting its file: it is not listed in the launcher, its hotkey is not registered, and it does not count when checking for overlapping hotkeys. Default `true` |
 | `type` | Required | `url` / `app` / `script` / `terminal` |
 | `keyword` | | A short word that is chosen first when typed as an exact match. For aliases, use a list (`[today, 今日]`) |
 | `hotkey` | | A global shortcut that runs this command without showing the window (format below) |
@@ -287,8 +288,10 @@ Validation:
 - One broken file does not stop the other commands from loading.
 - Files are read as YAML 1.2. `title: no` and `keyword: on` become strings. Values that look like numbers are kept
   exactly as written (`keyword: 1.0` stays `1.0`, `keyword: +1` stays `+1`).
-  For keys that expect a boolean, such as `pin: yes`, `yes` / `no` / `on` / `off` / `y` / `n` and quoted `"true"` / `"false"`
-  are also accepted as booleans.
+  For keys that expect a boolean (`enabled`, `pin`), `yes` / `no` / `on` / `off` / `y` / `n`, `1` / `0` and quoted
+  `"true"` / `"false"` are also accepted.
+- A new file written by the app has `enabled: false` right under `title` when the command is off, and no `enabled`
+  line when it is on. Turning a command back on removes the line.
 
 ## settings.yaml
 
@@ -484,6 +487,8 @@ Used for the launcher hotkey and for command hotkeys.
 
 - A list of every command file, for every OS, including broken files (which open as raw YAML so they can be fixed).
   Filter by text and by tag.
+- Each row has a checkbox that turns the command on or off (`enabled`) without opening it. Commands that are off are
+  dimmed and marked "off". The form has the same switch.
 - A form for the selected command. Every field of every action type is kept while editing, so switching the type
   does not lose what was typed; only the fields of the chosen type are saved.
 - Form / YAML views. Switching to YAML shows exactly the text that saving the form would write; switching back reads

@@ -14,6 +14,8 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Command {
     pub title: String,
+    /// A disabled command stays in its file but is not listed in the launcher and its hotkey is not registered.
+    pub enabled: bool,
     /// Short words that rank this command first when typed exactly. In written order.
     pub keywords: Vec<String>,
     /// Global shortcut that runs this command directly. The desktop app validates the format.
@@ -125,6 +127,7 @@ struct RawCommand {
     run: Option<Spanned<String>>,
     cwd: Option<Spanned<String>>,
     env: Option<Spanned<BTreeMap<String, String>>>,
+    enabled: Option<Spanned<Flag>>,
     pin: Option<Spanned<Flag>>,
     when: Option<RawWhen>,
 }
@@ -225,7 +228,7 @@ impl<'de> Deserialize<'de> for OneOrMany {
     }
 }
 
-/// A boolean. Also accepts `yes` / `no` / `on` / `off` for people writing by hand.
+/// A boolean. Also accepts `yes` / `no` / `on` / `off` and `1` / `0` for people writing by hand.
 ///
 /// Parsing recognizes only YAML 1.2 booleans, so other spellings arrive as strings.
 /// A quoted `"true"` also arrives as a string.
@@ -246,10 +249,25 @@ impl<'de> Deserialize<'de> for Flag {
                 Ok(Flag(value))
             }
 
+            fn visit_u64<E: de::Error>(self, value: u64) -> Result<Flag, E> {
+                match value {
+                    1 => Ok(Flag(true)),
+                    0 => Ok(Flag(false)),
+                    _ => Err(E::invalid_value(de::Unexpected::Unsigned(value), &self)),
+                }
+            }
+
+            fn visit_i64<E: de::Error>(self, value: i64) -> Result<Flag, E> {
+                match u64::try_from(value) {
+                    Ok(value) => self.visit_u64(value),
+                    Err(_) => Err(E::invalid_value(de::Unexpected::Signed(value), &self)),
+                }
+            }
+
             fn visit_str<E: de::Error>(self, value: &str) -> Result<Flag, E> {
                 match value.to_ascii_lowercase().as_str() {
-                    "true" | "yes" | "y" | "on" => Ok(Flag(true)),
-                    "false" | "no" | "n" | "off" => Ok(Flag(false)),
+                    "true" | "yes" | "y" | "on" | "1" => Ok(Flag(true)),
+                    "false" | "no" | "n" | "off" | "0" => Ok(Flag(false)),
                     _ => Err(E::invalid_value(de::Unexpected::Str(value), &self)),
                 }
             }
@@ -458,6 +476,7 @@ pub fn parse_command(source: &str) -> Result<Command, Vec<Diagnostic>> {
     match (title, action) {
         (Some(title), Some(action)) if problems.is_empty() => Ok(Command {
             title,
+            enabled: raw.enabled.is_none_or(|enabled| enabled.value.0),
             keywords,
             hotkey,
             pin: raw.pin.is_some_and(|pin| pin.value.0),
@@ -512,6 +531,7 @@ when:
             command,
             Command {
                 title: "Deploy blog".into(),
+                enabled: true,
                 keywords: vec!["deploy".into(), "blog".into()],
                 hotkey: Some("ctrl+alt+cmd+d".into()),
                 pin: true,
@@ -653,6 +673,43 @@ when:
             // Assert
             assert_eq!(command.keywords, [word], "keyword {word}");
             assert_eq!(command.tags, [word], "tag {word}");
+        }
+    }
+
+    #[test]
+    fn commands_are_enabled_unless_enabled_is_false_or_zero() {
+        for (line, expected) in [
+            ("", true),
+            ("enabled: true\n", true),
+            ("enabled: 1\n", true),
+            ("enabled: yes\n", true),
+            ("enabled: false\n", false),
+            ("enabled: 0\n", false),
+            ("enabled: '0'\n", false),
+            ("enabled: off\n", false),
+        ] {
+            // Arrange
+            let source = format!("title: A\n{line}type: url\nurl: https://example.com\n");
+
+            // Act
+            let command = parse_command(&source).unwrap();
+
+            // Assert
+            assert_eq!(command.enabled, expected, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn other_numbers_are_not_a_valid_enabled() {
+        for value in ["2", "-1", "maybe"] {
+            // Arrange
+            let source = format!("title: A\nenabled: {value}\ntype: url\nurl: https://example.com\n");
+
+            // Act
+            let problems = parse_command(&source).unwrap_err();
+
+            // Assert
+            assert_eq!(problems[0].line, Some(2), "{value}");
         }
     }
 

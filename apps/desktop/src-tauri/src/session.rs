@@ -92,7 +92,7 @@ impl Session {
                 self.commands = loaded
                     .commands
                     .into_iter()
-                    .filter(|stored| stored.command.applies_to(self.os))
+                    .filter(|stored| stored.command.enabled && stored.command.applies_to(self.os))
                     .collect();
                 for broken in loaded.broken {
                     let name = broken
@@ -265,6 +265,30 @@ mod tests {
             (by_id("logs").kind, by_id("logs").detail),
             ("terminal", "tail -f log".into())
         );
+    }
+
+    #[test]
+    fn disabled_commands_are_neither_listed_nor_given_their_hotkey() {
+        // Arrange
+        let fixture = Fixture::new();
+        fixture.command(
+            "on",
+            "title: On\nhotkey: ctrl+alt+cmd+o\ntype: url\nurl: https://example.com\n",
+        );
+        fixture.command(
+            "off",
+            "title: Off\nenabled: 0\nkeyword: off\nhotkey: ctrl+alt+cmd+f\ntype: url\nurl: https://example.com\n",
+        );
+        let mut session = fixture.session(Os::Macos);
+
+        // Act
+        session.reload_commands();
+
+        // Assert
+        assert_eq!(ids(&session.search("")), ["on"]);
+        assert_eq!(ids(&session.search("off")), Vec::<&str>::new());
+        assert_eq!(session.hotkeys(), [("on".to_string(), "ctrl+alt+cmd+o".to_string())]);
+        assert_eq!(session.problems(), Vec::<String>::new());
     }
 
     #[test]
