@@ -11,6 +11,7 @@ the configuration is kept as files, can be shared across machines with Git, and 
 | Desktop app (`apps/desktop`): background process, tray, hotkey, launcher window | Implemented |
 | Per-command hotkeys | Implemented |
 | App search with icons (macOS) | Implemented |
+| Built-in system commands (macOS) | Implemented |
 | Migration from Alfred (`import-alfred` in the CLI) | Implemented |
 | Widgets (above the launcher window) | Not implemented |
 | Settings window (general settings, launcher hotkey, commands) | Implemented |
@@ -466,6 +467,23 @@ Loading:
 - Fetching and drawing happen off the main thread, so typing never waits for an icon.
 
 The settings window has an Icon field for commands. Named icons and tag icons are edited in `icons.yaml`.
+
+## Built-in system commands
+
+On macOS, these are available without a command file (`crates/flintkey-core/src/system.rs`). Like apps, they are
+listed only once something is typed; the keywords rank them first.
+
+| Title | Keywords | What it does |
+|---|---|---|
+| System Settings | `settings`, `preferences` | Opens System Settings |
+| Start Screen Saver | `screensaver`, `screen saver` | Opens `ScreenSaverEngine.app` |
+| Lock Screen | `lock` | `pmset displaysleepnow`: turns the display off, which locks the screen when a password is required immediately after the display turns off (the default). Sending ⌃⌘Q would need the Accessibility permission |
+| Restart… | `restart`, `reboot` | Asks the login window to restart. macOS shows its confirmation with a countdown, and apps can save first |
+| Log Out… | `logout`, `log out` | Asks the login window to log out, with the same confirmation |
+| Launchpad | `launchpad`, `apps` | Opens Launchpad, or the Apps app on macOS 26 and later, which replaced it |
+
+Their ids start with `system:`. A command file that opens System Settings (or any app) without arguments hides
+the duplicate app search entry, as other commands do. Windows and Linux have none yet.
 
 ## App search
 

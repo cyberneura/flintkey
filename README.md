@@ -8,6 +8,7 @@ It stays in the menu bar (the system tray on Windows) and opens an input window 
 Settings can be edited in the settings window (tray menu → Settings…, or ⌘, in the launcher) or directly as YAML files.
 Changes to the files (an editor, `git pull`) take effect immediately.
 On macOS, installed apps can be searched and opened too, with their icons, without writing a command for each.
+System Settings, the screen saver, locking the screen, restarting, logging out and Launchpad are built in as well.
 Rows show the command's own icon, the site's favicon or app's icon, the tag's icon, or a default icon for the type.
 There is no plugin support yet.
 
