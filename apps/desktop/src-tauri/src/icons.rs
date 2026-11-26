@@ -15,6 +15,10 @@ const PIXELS: isize = 64;
 #[derive(Default)]
 pub struct IconCache {
     pngs: Mutex<HashMap<String, Option<Vec<u8>>>>,
+    /// Icons are drawn off the main thread, which must stay free to deliver key presses. AppKit allows drawing
+    /// into a bitmap on another thread (the current context is per thread), but `NSImage` is not documented as safe
+    /// to use from several threads at once, so drawings take turns.
+    drawing: Mutex<()>,
 }
 
 impl IconCache {
@@ -22,7 +26,10 @@ impl IconCache {
         if let Some(cached) = self.pngs.lock().unwrap().get(path) {
             return cached.clone();
         }
-        let png = draw(path);
+        let png = {
+            let _drawing = self.drawing.lock().unwrap();
+            draw(path)
+        };
         self.pngs.lock().unwrap().insert(path.to_string(), png.clone());
         png
     }

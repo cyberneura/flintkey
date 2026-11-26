@@ -5,7 +5,7 @@ use flintkey_core::apps::{self, InstalledApp};
 use flintkey_core::launch::{self, Machine, Plan};
 use flintkey_core::search::Searcher;
 use flintkey_core::settings::Settings;
-use flintkey_core::store::{Store, StoredCommand};
+use flintkey_core::store::{LoadedCommands, Store, StoredCommand};
 use flintkey_core::usage::{USAGE_FILE, Usage};
 use flintkey_core::{Action, Os};
 use serde::Serialize;
@@ -46,6 +46,31 @@ pub struct Session {
     entries: Vec<StoredCommand>,
     usage: Usage,
     searcher: Searcher,
+}
+
+/// Reads the commands, usage counts and apps from disk. Built by [`Session::reading`].
+pub struct Reading {
+    store: Store,
+    usage_path: PathBuf,
+    app_folders: Vec<PathBuf>,
+}
+
+/// What [`Reading::read`] found, for [`Session::apply`].
+pub struct Read {
+    commands: std::io::Result<LoadedCommands>,
+    usage: Usage,
+    apps: Vec<InstalledApp>,
+}
+
+impl Reading {
+    /// Apps are found by their file name; the folders are read, not Spotlight.
+    pub fn read(&self) -> Read {
+        Read {
+            commands: self.store.load_commands(),
+            usage: Usage::load(&self.usage_path),
+            apps: apps::scan(&self.app_folders),
+        }
+    }
 }
 
 impl Session {
@@ -109,11 +134,28 @@ impl Session {
         }
     }
 
-    /// Reloads `commands/*.yaml` and the usage counts.
-    pub fn reload_commands(&mut self) {
+    /// Reads `commands/*.yaml`, the usage counts and the installed apps again, holding the session the whole time.
+    /// The app uses [`Session::reading`] instead, so the session is not locked while the disk is read.
+    pub fn reload(&mut self) {
+        let read = self.reading().read();
+        self.apply(read);
+    }
+
+    /// What [`Session::reload`] reads, detached from the session so it can be read without holding its lock.
+    pub fn reading(&self) -> Reading {
+        Reading {
+            store: Store::new(self.store.root().to_path_buf()),
+            usage_path: self.usage_path.clone(),
+            app_folders: self.app_folders.clone(),
+        }
+    }
+
+    /// Takes in what [`Reading::read`] read.
+    pub fn apply(&mut self, read: Read) {
         self.command_problems.clear();
-        self.usage = Usage::load(&self.usage_path);
-        match self.store.load_commands() {
+        self.usage = read.usage;
+        self.apps = read.apps;
+        match read.commands {
             Ok(loaded) => {
                 self.commands = loaded
                     .commands
@@ -140,12 +182,6 @@ impl Session {
                 self.command_problems.push(format!("commands: {error}"));
             }
         }
-        self.rebuild_entries();
-    }
-
-    /// Looks for installed apps again. Apps are found by their file name; the folders are read, not Spotlight.
-    pub fn reload_apps(&mut self) {
-        self.apps = apps::scan(&self.app_folders);
         self.rebuild_entries();
     }
 
@@ -316,7 +352,7 @@ mod tests {
         );
         fixture.command("logs", "title: Logs\ntype: terminal\nrun: tail -f log\n");
         let mut session = fixture.session(Os::Macos);
-        session.reload_commands();
+        session.reload();
 
         // Act
         let rows = session.search("");
@@ -356,8 +392,7 @@ mod tests {
             fs::create_dir_all(folder.join(bundle).join("Contents")).unwrap();
         }
         let mut session = fixture.session(Os::Macos).with_app_folders(vec![folder]);
-        session.reload_commands();
-        session.reload_apps();
+        session.reload();
         session
     }
 
@@ -470,7 +505,7 @@ mod tests {
         );
 
         // Act
-        session.reload_apps();
+        session.reload();
 
         // Assert
         assert!(session.app_folders.is_empty());
@@ -491,7 +526,7 @@ mod tests {
         let mut session = fixture.session(Os::Macos);
 
         // Act
-        session.reload_commands();
+        session.reload();
 
         // Assert
         assert_eq!(ids(&session.search("")), ["on"]);
@@ -514,7 +549,7 @@ mod tests {
         );
         fixture.command("any", "title: Anywhere\ntype: url\nurl: https://example.com\n");
         let mut session = fixture.session(Os::Windows);
-        session.reload_commands();
+        session.reload();
 
         // Act
         let rows = session.search("");
@@ -532,7 +567,7 @@ mod tests {
         let mut session = fixture.session(Os::Macos);
 
         // Act
-        session.reload_commands();
+        session.reload();
 
         // Assert
         assert_eq!(ids(&session.search("")), ["good"]);
@@ -548,12 +583,12 @@ mod tests {
         let fixture = Fixture::new();
         fixture.command("bad", "title: Bad\ntype: url\n");
         let mut session = fixture.session(Os::Macos);
-        session.reload_commands();
+        session.reload();
         assert_eq!(session.problems().len(), 1);
 
         // Act
         fixture.command("bad", "title: Bad\ntype: url\nurl: https://example.com\n");
-        session.reload_commands();
+        session.reload();
 
         // Assert
         assert_eq!(session.problems(), Vec::<String>::new());
@@ -574,7 +609,7 @@ mod tests {
 
         // Act
         session.reload_settings();
-        session.reload_commands();
+        session.reload();
 
         // Assert
         assert_eq!(session.search(""), Vec::<Row>::new());
@@ -640,7 +675,7 @@ mod tests {
         let mut session = fixture.session(Os::Macos);
 
         // Act
-        session.reload_commands();
+        session.reload();
 
         // Assert
         assert_eq!(
@@ -660,7 +695,7 @@ mod tests {
         fixture.settings("terminal:\n  app: windows-terminal\n");
         let mut session = fixture.session(Os::Windows);
         session.reload_settings();
-        session.reload_commands();
+        session.reload();
 
         // Act
         let plan = session.plan("logs", None, None).unwrap();
@@ -680,7 +715,7 @@ mod tests {
         fixture.settings("terminal:\n  app: windows-terminal\n");
         let mut session = fixture.session(Os::Macos);
         session.reload_settings();
-        session.reload_commands();
+        session.reload();
 
         // Act
         let result = session.plan("logs", None, None);
@@ -699,7 +734,7 @@ mod tests {
         let mut session = fixture.session(Os::Macos);
 
         // Act
-        session.reload_commands();
+        session.reload();
         session.reload_settings();
 
         // Assert
@@ -714,7 +749,7 @@ mod tests {
         // Arrange
         let fixture = Fixture::new();
         let mut session = fixture.session(Os::Macos);
-        session.reload_commands();
+        session.reload();
 
         // Act
         let result = session.plan("gone", None, None);
@@ -730,7 +765,7 @@ mod tests {
         fixture.command("alpha", "title: Alpha\ntype: url\nurl: https://example.com/a\n");
         fixture.command("beta", "title: Beta\ntype: url\nurl: https://example.com/b\n");
         let mut session = fixture.session(Os::Macos);
-        session.reload_commands();
+        session.reload();
         assert_eq!(ids(&session.search("")), ["alpha", "beta"]);
 
         // Act
@@ -739,7 +774,7 @@ mod tests {
         // Assert
         assert_eq!(ids(&session.search("")), ["beta", "alpha"]);
         let mut fresh = fixture.session(Os::Macos);
-        fresh.reload_commands();
+        fresh.reload();
         assert_eq!(ids(&fresh.search("")), ["beta", "alpha"]);
     }
 
@@ -750,7 +785,7 @@ mod tests {
         fixture.command("alpha", "title: Alpha\ntype: url\nurl: https://example.com/a\n");
         fixture.command("beta", "title: Beta\ntype: url\nurl: https://example.com/b\n");
         let mut session = fixture.session(Os::Macos);
-        session.reload_commands();
+        session.reload();
         let mut other = fixture.session(Os::Macos);
         other.record_use("beta").unwrap();
         other.record_use("beta").unwrap();
