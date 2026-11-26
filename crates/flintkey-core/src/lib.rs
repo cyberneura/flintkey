@@ -4,6 +4,7 @@
 //! command launches, resolving secrets, and ranking search results. The desktop app is a thin layer on top.
 
 pub mod alfred;
+pub mod apps;
 pub mod command;
 pub mod diagnostic;
 pub mod hotkey;

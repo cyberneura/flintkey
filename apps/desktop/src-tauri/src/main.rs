@@ -5,6 +5,7 @@
 
 mod forms;
 mod hotkeys;
+mod icons;
 #[cfg(target_os = "macos")]
 mod panel;
 mod placement;
@@ -64,6 +65,7 @@ struct AppState {
     /// Failures that happened after the window was hidden. Shown the next time the window appears.
     notices: Mutex<Vec<String>>,
     showing: Mutex<Showing>,
+    icons: icons::IconCache,
     /// Whether the window is the target of keyboard input.
     has_key: AtomicBool,
     /// Whether the window could be turned into a panel that receives keyboard input.
@@ -114,6 +116,16 @@ fn open_session(state: State<'_, AppState>, query: String) -> View {
 #[tauri::command]
 fn search(state: State<'_, AppState>, query: String) -> Vec<Row> {
     state.session.lock().unwrap().search(&query)
+}
+
+/// The icon of the app bundle at `path` (a row's `icon`), as PNG bytes. Not async: AppKit draws on the main thread.
+#[tauri::command]
+fn app_icon(state: State<'_, AppState>, path: String) -> Result<tauri::ipc::Response, String> {
+    if !path.ends_with(".app") {
+        return Err(format!("`{path}` is not an app"));
+    }
+    let png = state.icons.png(&path).ok_or_else(|| format!("no icon for `{path}`"))?;
+    Ok(tauri::ipc::Response::new(png))
 }
 
 /// Runs a command. If no plan can be made, returns the error and keeps the window open.
@@ -299,6 +311,8 @@ fn show_launcher_on_main(app: &AppHandle, focus: Focus) {
     // Reload commands after showing the window (with hundreds of them, it delays the window).
     // The page asks for the list only after this function returns, so the list reflects the reload.
     sync_hotkeys(app);
+    // Apps installed or removed since the last showing. Reading the folders takes a few milliseconds.
+    app.state::<AppState>().session.lock().unwrap().reload_apps();
 }
 
 /// Whether the window can be shown without taking keyboard input. Only on macOS, when the panel conversion worked.
@@ -479,6 +493,7 @@ fn main() {
         hotkeys: Mutex::new(Registry::default()),
         notices: Mutex::new(Vec::new()),
         showing: Mutex::new(Showing::default()),
+        icons: icons::IconCache::default(),
         has_key: AtomicBool::new(false),
         #[cfg(target_os = "macos")]
         panel: AtomicBool::new(false),
@@ -507,6 +522,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             open_session,
             search,
+            app_icon,
             run,
             hide,
             settings_ui::settings_page,

@@ -1108,7 +1108,7 @@ dependencies = [
 
 [[package]]
 name = "flintkey-core"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "nucleo-matcher",
  "open",
@@ -1122,11 +1122,13 @@ dependencies = [
 
 [[package]]
 name = "flintkey-desktop"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "flintkey-core",
  "notify",
  "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
  "open",
  "serde",
  "serde_json",

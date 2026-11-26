@@ -2,6 +2,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { onMount } from 'svelte';
+  import { iconLoader } from './lib/icons';
   import { intentFor, moveSelection } from './lib/keys';
   import { latestOnly } from './lib/latest';
 
@@ -12,6 +13,8 @@
     hotkey: string | null;
     kind: string;
     detail: string;
+    /** The app bundle whose icon the row shows. */
+    icon: string | null;
   }
 
   interface View {
@@ -28,6 +31,16 @@
   let configDir = $state('');
   let input: HTMLInputElement | undefined = $state();
   let list: HTMLUListElement | undefined = $state();
+  /** Image URL by bundle path, filled in as icons arrive. */
+  let iconUrls = $state<Record<string, string>>({});
+  const icons = iconLoader(
+    (path) => invoke<ArrayBuffer>('app_icon', { path }),
+    (path, url) => (iconUrls[path] = url),
+  );
+
+  $effect(() => {
+    icons.load(rows.map((row) => row.icon));
+  });
 
   // Number of the current showing (0 while hidden). Sent with run requests so the app can match it against
   // the current showing. Prevents actions from a previous showing from running after the window reopens.
@@ -147,7 +160,7 @@
       oninput={(event) => search(event.currentTarget.value)}
       data-annotate="input-query"
       class="w-full shrink-0 bg-transparent px-5 py-4 text-xl outline-none placeholder:text-zinc-500"
-      placeholder="Search commands"
+      placeholder="Search commands and apps"
       autocomplete="off"
       autocorrect="off"
       autocapitalize="off"
@@ -168,6 +181,11 @@
             onmousemove={() => (selected = index)}
             onclick={() => run(row)}
           >
+            <div class="flex size-8 shrink-0 items-center justify-center">
+              {#if row.icon && iconUrls[row.icon]}
+                <img src={iconUrls[row.icon]} alt="" class="size-8" draggable="false" />
+              {/if}
+            </div>
             <div class="flex min-w-0 flex-1 flex-col">
               <div class="flex items-center gap-2">
                 <span class="truncate">{row.title}</span>
@@ -196,7 +214,7 @@
           <p>No commands yet. Add one YAML file per command to:</p>
           <p class="select-text">{configDir}/commands</p>
         {:else}
-          <p>No command matches.</p>
+          <p>Nothing matches.</p>
         {/if}
       </div>
     {/if}
