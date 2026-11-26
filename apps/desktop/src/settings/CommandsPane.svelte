@@ -6,7 +6,9 @@
   import Problems from './Problems.svelte';
   import TokenInput from './TokenInput.svelte';
 
-  let { os, reloadKey }: { os: Os; reloadKey: number } = $props();
+  let { os, reloadKey, changedKey }: { os: Os; reloadKey: number; changedKey: number } = $props();
+  /** The files changed on disk while there were unsaved edits here. */
+  let changedWhileEditing = $state(false);
 
   let commands = $state<CommandSummary[]>([]);
   let listProblems = $state<string[]>([]);
@@ -58,18 +60,32 @@
     }
   }
 
-  // Reload whenever the window is shown again: the files may have changed meanwhile.
+  // Reload whenever the window is shown again or the files change on disk. Unsaved edits are kept.
+  function reload() {
+    loadList();
+    if (selectedId !== null && !creating && !dirty) {
+      open(selectedId, true);
+    }
+  }
+
   $effect(() => {
     void reloadKey;
+    untrack(reload);
+  });
+
+  $effect(() => {
+    void changedKey;
     untrack(() => {
-      loadList();
-      if (selectedId !== null && !creating && !dirty) {
-        open(selectedId);
+      if (changedKey === 0) return;
+      if (dirty && !creating) {
+        changedWhileEditing = true;
       }
+      reload();
     });
   });
 
   function showPage(loaded: CommandPage) {
+    changedWhileEditing = false;
     page = loaded;
     form = loaded.form ? structuredClone($state.snapshot(loaded.form)) : emptyCommand();
     source = loaded.source;
@@ -78,8 +94,9 @@
     view = loaded.form ? view : 'yaml';
   }
 
-  async function open(id: string) {
-    status = '';
+  /** `keepStatus`: a reload after this window's own save should not clear its "Saved." */
+  async function open(id: string, keepStatus = false) {
+    if (!keepStatus) status = '';
     confirmDelete = false;
     try {
       const loaded = await api.commandPage(id);
@@ -375,6 +392,13 @@
 
       <Problems {problems} />
 
+      {#if changedWhileEditing}
+        <div class="rounded-md border border-amber-700 bg-amber-950/60 px-3 py-2 text-sm text-amber-100">
+          The configuration files changed on disk while you were editing. If this file changed, Save will be refused;
+          Revert loads it again.
+        </div>
+      {/if}
+
       {#if view === 'yaml'}
         <textarea
           data-annotate="command-yaml"
@@ -487,7 +511,7 @@
               value={form.hotkey}
               {os}
               id={creating ? null : selectedId}
-              epoch={reloadKey}
+              epoch={reloadKey + changedKey}
               optional
               onchange={(value) => (form.hotkey = value)}
             />

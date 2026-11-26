@@ -115,6 +115,12 @@
         showing = event.payload;
         openSession();
       }),
+      // The configuration files changed on disk. Refresh an open window; a hidden one reloads when shown.
+      listen('config-changed', () => {
+        if (showing !== 0) {
+          openSession();
+        }
+      }),
       // Clear on hide so the previous input does not flash when the window next appears.
       listen('launcher-hidden', () => {
         showing = 0;
