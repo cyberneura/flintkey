@@ -200,7 +200,11 @@ mod tests {
             resolved("https://example.com/a.png", &config),
             Ok(IconSource::Url("https://example.com/a.png".into()))
         );
-        assert_eq!(resolved("/opt/icons/a.png", &config), file("/opt/icons/a.png"));
+        let absolute = std::env::temp_dir().join("a.png");
+        assert_eq!(
+            resolved(absolute.to_str().unwrap(), &config),
+            Ok(IconSource::File(absolute.clone()))
+        );
         assert_eq!(resolved("~/Pictures/a.png", &config), file("/home/me/Pictures/a.png"));
         assert_eq!(
             resolved("work/briefcase.svg", &config),

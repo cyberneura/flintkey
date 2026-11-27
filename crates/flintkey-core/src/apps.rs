@@ -178,7 +178,9 @@ mod tests {
     #[test]
     fn a_command_finds_its_app_by_name_or_path() {
         // Arrange
-        let home = Path::new("/Users/me");
+        // Absolute on every host, so the path lookup is tested on Windows too.
+        let home = std::env::temp_dir();
+        let home = home.as_path();
         let apps = [
             InstalledApp {
                 name: "Messenger".into(),
@@ -186,7 +188,7 @@ mod tests {
             },
             InstalledApp {
                 name: "Tool".into(),
-                path: "/Users/me/Applications/Tool.app".into(),
+                path: home.join("Applications/Tool.app"),
             },
         ];
 
