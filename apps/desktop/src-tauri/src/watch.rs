@@ -60,10 +60,15 @@ impl Watched {
     /// whenever a file in it is written, hidden ones included; the files are reported on their own, so a modification
     /// of the folder is not a change (its creation, removal or renaming still is).
     pub fn concerns_event(&self, kind: &notify::EventKind, paths: &[PathBuf]) -> bool {
-        paths.iter().any(|path| {
-            self.concerns(path) && !(matches!(kind, notify::EventKind::Modify(_)) && path == &self.commands)
-        })
+        paths
+            .iter()
+            .any(|path| self.concerns(path) && !(is_content_modification(kind) && path == &self.commands))
     }
+}
+
+/// A modification other than a rename, which notify also reports as a modification.
+fn is_content_modification(kind: &notify::EventKind) -> bool {
+    matches!(kind, notify::EventKind::Modify(modify) if !matches!(modify, notify::event::ModifyKind::Name(_)))
 }
 
 /// Starts watching `dir`, creating it and its `commands` folder if they are missing. `on_change` runs on a
@@ -102,7 +107,7 @@ mod tests {
     fn a_modification_of_the_commands_folder_itself_is_not_a_change() {
         // Arrange
         use notify::EventKind;
-        use notify::event::{CreateKind, ModifyKind, RemoveKind};
+        use notify::event::{CreateKind, ModifyKind, RemoveKind, RenameMode};
         let watched = Watched::new(Path::new("/config"));
         let folder = [PathBuf::from("/config/commands")];
         let file = [PathBuf::from("/config/commands/site.yaml")];
@@ -111,6 +116,7 @@ mod tests {
         assert!(!watched.concerns_event(&EventKind::Modify(ModifyKind::Any), &folder));
         assert!(watched.concerns_event(&EventKind::Remove(RemoveKind::Folder), &folder));
         assert!(watched.concerns_event(&EventKind::Create(CreateKind::Folder), &folder));
+        assert!(watched.concerns_event(&EventKind::Modify(ModifyKind::Name(RenameMode::Any)), &folder));
         assert!(watched.concerns_event(&EventKind::Modify(ModifyKind::Any), &file));
     }
 
