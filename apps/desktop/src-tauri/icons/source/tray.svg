@@ -1,12 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <!-- macOS template image: only alpha matters. The stone is half-transparent behind; the star is solid in front,
-       separated from the stone by a transparent gap. -->
+  <!-- macOS template image: only alpha matters. The menu bar draws it 18pt tall, so both shapes use the full height.
+       The stone is half-transparent behind; the star is solid in front, separated from the stone by a transparent
+       gap. -->
   <defs>
     <mask id="gap">
       <rect width="1024" height="1024" fill="white"/>
-      <path d="M512 72 C548 400 604 456 952 512 C604 568 548 624 512 952 C476 624 420 568 72 512 C420 456 476 400 512 72 Z" fill="black" stroke="black" stroke-width="90" stroke-linejoin="round"/>
+      <path d="M512 0 L602 422 L1024 512 L602 602 L512 1024 L422 602 L0 512 L422 422 Z" fill="black" stroke="black" stroke-width="110" stroke-linejoin="round"/>
     </mask>
   </defs>
-  <polygon points="130,600 240,260 500,140 790,230 900,530 740,850 320,880" fill="black" fill-opacity="0.45" mask="url(#gap)"/>
-  <path d="M512 72 C548 400 604 456 952 512 C604 568 548 624 512 952 C476 624 420 568 72 512 C420 456 476 400 512 72 Z" fill="black"/>
+  <polygon points="40,620 150,200 470,40 840,140 1004,500 830,930 290,990" fill="black" fill-opacity="0.45" mask="url(#gap)"/>
+  <path d="M512 0 L602 422 L1024 512 L602 602 L512 1024 L422 602 L0 512 L422 422 Z" fill="black" stroke="black" stroke-width="10" stroke-linejoin="round"/>
 </svg>
