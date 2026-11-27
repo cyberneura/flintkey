@@ -23,6 +23,8 @@ use placement::{Monitor, Position, Rect};
 use serde::Serialize;
 use session::{IconRef, Row, Session};
 use showing::Showing;
+#[cfg(target_os = "macos")]
+use showing::{KeyCheck, key_check};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -397,24 +399,21 @@ fn make_sure_keys_arrive(app: &AppHandle, id: u64, retries: u32) {
         std::thread::sleep(KEY_CHECK_DELAY);
         let main = handle.clone();
         let _ = handle.run_on_main_thread(move || {
-            let current = main.state::<AppState>().showing.lock().unwrap().id();
             let Some(window) = main.get_webview_window(LAUNCHER) else {
                 return;
             };
-            if current != id || !window.is_visible().unwrap_or(false) {
-                return;
-            }
             let Ok(ns_window) = window.ns_window() else {
                 return;
             };
+            let current = main.state::<AppState>().showing.lock().unwrap().id();
             // SAFETY: this window became a panel at startup and stays open until the app exits. Main thread.
-            if unsafe { panel::receives_keys(ns_window) } {
-                return;
-            }
-            // SAFETY: as above.
-            unsafe { panel::show(ns_window, true) };
-            if retries > 1 {
-                make_sure_keys_arrive(&main, id, retries - 1);
+            let receives_keys = unsafe { panel::receives_keys(ns_window) };
+            if let KeyCheck::Retake { retries_left } = key_check(id, current, receives_keys, retries) {
+                // SAFETY: as above.
+                unsafe { panel::show(ns_window, true) };
+                if retries_left > 0 {
+                    make_sure_keys_arrive(&main, id, retries_left);
+                }
             }
         });
     });

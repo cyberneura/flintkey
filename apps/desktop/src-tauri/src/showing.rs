@@ -50,9 +50,44 @@ impl Showing {
     }
 }
 
+/// What to do when a showing that took the keyboard checks, a beat later, whether key presses reach the page.
+// Only the macOS panel can be shown without the keyboard, so only it checks.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyCheck {
+    /// The showing is over (hidden, or shown again), or the page already receives keys.
+    Stop,
+    /// Take the keyboard again, then check again if `retries_left` is not 0.
+    Retake { retries_left: u32 },
+}
+
+/// The key check for showing `checking`, with `retries` attempts left (counting this one). `current` is the
+/// current showing's number (0 while hidden).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn key_check(checking: u64, current: u64, receives_keys: bool, retries: u32) -> KeyCheck {
+    if checking != current || receives_keys || retries == 0 {
+        KeyCheck::Stop
+    } else {
+        KeyCheck::Retake {
+            retries_left: retries - 1,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_key_check_retakes_the_keyboard_only_while_its_showing_lasts_and_keys_do_not_arrive() {
+        // Act / Assert
+        assert_eq!(key_check(3, 3, false, 5), KeyCheck::Retake { retries_left: 4 });
+        assert_eq!(key_check(3, 3, false, 1), KeyCheck::Retake { retries_left: 0 });
+        assert_eq!(key_check(3, 3, false, 0), KeyCheck::Stop, "retries used up");
+        assert_eq!(key_check(3, 3, true, 5), KeyCheck::Stop, "keys arrive");
+        assert_eq!(key_check(3, 0, false, 5), KeyCheck::Stop, "hidden");
+        assert_eq!(key_check(3, 4, false, 5), KeyCheck::Stop, "shown again");
+    }
 
     #[test]
     fn a_showing_accepts_exactly_one_request() {
