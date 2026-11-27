@@ -368,8 +368,10 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     struct FailingSecrets;
 
+    #[cfg(unix)]
     impl SecretResolver for FailingSecrets {
         fn resolve(&self, references: &[String]) -> Result<Vec<String>, SecretError> {
             if references.is_empty() {
@@ -381,8 +383,10 @@ mod tests {
     }
 
     /// A resolver that breaks the contract by returning no values however many references there are.
+    #[cfg(unix)]
     struct ForgetfulSecrets;
 
+    #[cfg(unix)]
     impl SecretResolver for ForgetfulSecrets {
         fn resolve(&self, _: &[String]) -> Result<Vec<String>, SecretError> {
             Ok(Vec::new())
@@ -473,8 +477,13 @@ mod tests {
         let windows = plan(&action, &machine(Os::Windows)).unwrap();
 
         // Assert
-        assert_eq!(mac.args, strings(&["-a", "/home/me/workspace/tool/Tool.app"]));
-        assert_eq!(linux.program, "/home/me/workspace/tool/Tool.app");
+        // Joined with the separator of the system the tests run on.
+        let expanded = Path::new("/home/me")
+            .join("workspace/tool/Tool.app")
+            .display()
+            .to_string();
+        assert_eq!(mac.args, strings(&["-a", &expanded]));
+        assert_eq!(linux.program, expanded);
         assert_eq!(
             windows,
             Plan::Open {
@@ -818,7 +827,8 @@ mod tests {
         assert_eq!(process.program, "/usr/bin/osascript");
         let (separator, command_line) = (&process.args[process.args.len() - 2], process.args.last().unwrap());
         assert_eq!(separator, "--");
-        assert_eq!(command_line, &format!("cd '/home/me/my work' && {run}"));
+        let cwd = Path::new("/home/me").join("my work").display().to_string();
+        assert_eq!(command_line, &format!("cd '{cwd}' && {run}"));
         let script_source = process.args[..process.args.len() - 2].join("\n");
         assert!(
             script_source.contains("tell application \"Terminal\""),

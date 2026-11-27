@@ -7,4 +7,5 @@ exclude = ["spikes"]
 version = "0.10.0"
 edition = "2024"
 publish = false
+license = "MIT"
 repository = "https://github.com/cyberneura/flintkey"

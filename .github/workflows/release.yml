@@ -1,0 +1,473 @@
+name: Release
+
+# A release is decided by the version on main (the Cargo workspace version, which
+# apps/desktop/package.json must match; see scripts/read-version.sh). Putting a version that has not
+# been released, and is newer than the latest release, on main releases it. Pushing again with a
+# released version does nothing, so the outcome does not depend on how the bump reached main
+# (squash, rebase or a direct push), and there is no path filter for the same reason.
+on:
+  push:
+    branches: [main]
+  # Pull requests run only the test job (plan and everything after it are skipped), so the gate that
+  # guards releases is the same one that checks a pull request before it is merged.
+  pull_request:
+  # For a run that failed for reasons other than the version (a transient API error, say). It goes
+  # through the same decision, so it cannot publish a released version again.
+  workflow_dispatch:
+
+# No permissions by default; each job gets what it needs. test runs code a pull request brought in,
+# so it gets contents: read and nothing more.
+#
+# A pull request from a fork of a public repository gets a read-only GITHUB_TOKEN and no secrets,
+# whatever this file says, so editing the workflow in a pull request does not reach the write jobs.
+# Only people who already have write access can open a pull request from a branch of this repository.
+permissions: {}
+
+# Release runs go one at a time, so a later run's plan sees what an earlier run published and the same
+# version is not built twice. GitHub does not promise to start queued runs in push order; plan refuses
+# a version older than the latest release, which covers that. Both settings are needed so no run is
+# dropped (a dropped run's version would wait for the next push):
+#   cancel-in-progress: false - a later run does not cancel the running one.
+#   queue: max - keep up to 100 pending runs. The default keeps one, and a newer run replaces it.
+#
+# Pull request runs are not part of that queue: in the same group, one pull request would hold
+# releases back. Each commit gets its own group, so the latest commit of a pull request is not stuck
+# behind checks of its older commits.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('{0}-{1}', github.ref, github.sha) || 'release' }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  # Before any macOS or Windows runner starts, make sure the version is unreleased and newer than the
+  # latest release, so an ordinary push to main does not start them. Skipped on pull requests, which
+  # skips build and publish too.
+  plan:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.decide.outputs.release }}
+    steps:
+      # A dispatch can name any ref; a branch carrying an unreleased version must not release itself.
+      - name: Refuse to release from anywhere but main
+        if: github.ref != 'refs/heads/main'
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::releases come from main, and this run is on ${REF}"
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Read version
+        id: version
+        run: |
+          version=$(bash scripts/read-version.sh)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Assigned rather than echoed, so the step fails when the script cannot decide.
+      - name: Decide whether this version still needs releasing
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          release=$(bash scripts/release-decide.sh)
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+
+  # The gate in front of every release build, on the same systems the builds run on: much of the
+  # desktop app is behind #[cfg(target_os = ...)] and does not compile at all on the other systems.
+  test:
+    # On push and dispatch, only for a version that is being released (otherwise every push to main
+    # would start a macOS runner). !cancelled() lifts the automatic skip that plan's skip on pull
+    # requests would cause.
+    needs: plan
+    if: >-
+      ${{ !cancelled()
+          && (github.event_name == 'pull_request'
+              || (needs.plan.result == 'success'
+                  && needs.plan.outputs.release == 'true')) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+
+      # Tests run for the host only; the universal build's second architecture is not needed here.
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master 2026-07-16
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Cache Rust (cargo + target)
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Install dependencies
+        run: pnpm -C apps/desktop install --frozen-lockfile
+
+      - name: Type-check frontend
+        run: pnpm -C apps/desktop check
+
+      - name: Run frontend tests
+        run: pnpm -C apps/desktop test
+
+      - name: Run Rust tests
+        run: cargo test --workspace --locked
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  # The one draft release that every build uploads to, made before the builds. Left to itself,
+  # tauri-action looks the tag up after building and creates a release when there is none, so two
+  # builds finishing together would each create a draft, and publishing one would leave the other
+  # platform's files out. With releaseId it neither looks up nor creates.
+  #
+  # A draft left by a failed run is reused, with its target moved to this run's commit (publishing it
+  # at the commit of the run that created it would tag something other than what was built).
+  draft:
+    # No draft before the tests pass; every failure would leave an empty one behind.
+    needs: [plan, test]
+    if: github.event_name != 'pull_request' && needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.draft.outputs.release_id }}
+    steps:
+      - name: Find or create the draft release
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: v${{ needs.plan.outputs.version }}
+        run: |
+          # releases/tags/<tag> does not return drafts, so search the list (which includes drafts for a
+          # token with contents: write).
+          found=$(gh api --paginate "repos/${GH_REPO}/releases?per_page=100" \
+            --jq '.[] | select(.tag_name == env.TAG) | "\(.id) \(.draft)"')
+          published=$(printf '%s\n' "$found" | awk '$2 == "false" { n++ } END { print n + 0 }')
+          drafts=$(printf '%s\n' "$found" | awk '$2 == "true" { print $1 }')
+          draft_count=$(printf '%s\n' "$found" | awk '$2 == "true" { n++ } END { print n + 0 }')
+          if [ "$published" -gt 0 ]; then
+            echo "::error::${TAG} is already published, but plan decided to release it. Not touching it."
+            exit 1
+          fi
+          # Picking one would publish it without the files uploaded to the others.
+          if [ "$draft_count" -gt 1 ]; then
+            echo "::error::found ${draft_count} draft releases for ${TAG} (ids: $(echo $drafts)). Delete all but one, then re-run."
+            exit 1
+          fi
+          if [ "$draft_count" -eq 1 ]; then
+            id="$drafts"
+            # tag_name is sent too: patching only target_commitish of a draft makes GitHub replace its
+            # tag_name with untagged-<hash>, after which nothing finds it by tag.
+            gh api -X PATCH "repos/${GH_REPO}/releases/${id}" \
+              -f tag_name="${TAG}" \
+              -f target_commitish="${GITHUB_SHA}" --silent
+            # Files a failed run left behind were built from its commit, not this one.
+            for asset in $(gh api "repos/${GH_REPO}/releases/${id}/assets?per_page=100" --jq '.[].id'); do
+              gh api -X DELETE "repos/${GH_REPO}/releases/assets/${asset}"
+              echo "Deleted asset ${asset} left by an earlier run."
+            done
+            echo "Reusing draft ${id} for ${TAG} (target set to ${GITHUB_SHA})."
+          else
+            id=$(gh api -X POST "repos/${GH_REPO}/releases" \
+              -f tag_name="${TAG}" -f name="Flintkey ${TAG}" \
+              -F draft=true -F prerelease=false \
+              -f target_commitish="${GITHUB_SHA}" --jq '.id')
+            echo "Created draft ${id} for ${TAG}."
+          fi
+          if ! [[ "$id" =~ ^[0-9]+$ ]]; then
+            echo "::error::could not get the id of the draft release for ${TAG} (got '${id}')."
+            exit 1
+          fi
+          echo "release_id=$id" >> "$GITHUB_OUTPUT"
+
+  build:
+    # needs only reaches jobs of the same run, so the tests must stay in this workflow.
+    needs: [plan, test, draft]
+    # Never on pull requests: this job holds the Apple certificate.
+    if: github.event_name != 'pull_request' && needs.plan.outputs.release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # A universal dmg (Intel and Apple Silicon), signed with Developer ID and notarized.
+          - platform: macos-latest
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin --bundles dmg
+          # An unsigned NSIS installer only, no MSI. Not yet tried on a real Windows machine.
+          - platform: windows-latest
+            rust-targets: ''
+            args: --bundles nsis
+    runs-on: ${{ matrix.platform }}
+    permissions:
+      contents: write
+    # An upper bound for a hang: a cold two-architecture build plus Apple's notarization queue.
+    timeout-minutes: 90
+    steps:
+      # persist-credentials: false keeps the write token out of .git/config, where install scripts and
+      # third-party actions could pick it up. Steps that need a token get it through env.
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+
+      # Pinned to a commit on master. A commit of the generated `stable` branch is garbage-collected
+      # once the branch moves, which would break every later run.
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master 2026-07-16
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust-targets }}
+
+      - name: Cache Rust (cargo + target)
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Install dependencies
+        run: pnpm -C apps/desktop install --frozen-lockfile
+
+      # A missing secret does not fail the build; it silently skips signing or notarization and the
+      # release still looks fine. Stop here instead.
+      - name: Verify signing secrets are present
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=()
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+            APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing repository secrets: ${missing[*]}. Signing and notarization would be silently skipped."
+            exit 1
+          fi
+          echo "All signing and notarization secrets are present."
+
+      # The tauri CLI does not import certificates; put the Developer ID one in a throwaway keychain.
+      - name: Import Apple Developer certificate
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 24)
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import "$RUNNER_TEMP/certificate.p12" -k build.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          # codesign looks identities up in the search list, not the default keychain.
+          security list-keychains -d user -s build.keychain
+          # find-identity exits 0 even with no identity, hence the grep.
+          security find-identity -v -p codesigning
+          security find-identity -v -p codesigning | grep -q "Developer ID Application" || {
+            echo "Error: no 'Developer ID Application' identity in the keychain search list" >&2
+            exit 1
+          }
+          rm "$RUNNER_TEMP/certificate.p12"
+
+      # Windows: build and upload to the draft by id. The draft is published by the publish job only
+      # after every platform succeeded. A re-run replaces assets of the same name.
+      #
+      # Every `uses:` in this job is pinned to a commit, not a tag: the job holds the Apple certificate,
+      # and a moved tag would hand it to whoever moved it. Update by commit SHA as well.
+      # Same guard as the macOS upload: "Re-run failed jobs" reuses the saved release id, which a later
+      # run may have taken over (it moves the target to its own commit) or published since.
+      - name: Make sure the release is still a draft
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ needs.draft.outputs.release_id }}
+        run: |
+          state=$(gh api "repos/${GH_REPO}/releases/${RELEASE_ID}" --jq '"\(.draft) \(.target_commitish)"')
+          if [ "$state" != "true ${GITHUB_SHA}" ]; then
+            echo "::error::release ${RELEASE_ID} is no longer this run's draft (draft, target: ${state}); not uploading to it."
+            exit 1
+          fi
+
+      - name: Build and upload to GitHub Release (draft)
+        if: matrix.platform == 'windows-latest'
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: pnpm exec tauri
+          releaseId: ${{ needs.draft.outputs.release_id }}
+          args: ${{ matrix.args }}
+
+      # macOS: with APPLE_* set, the tauri CLI signs, notarizes and staples the .app and signs the dmg.
+      # The dmg itself is notarized in the next step, which tauri-action could not fit in between the
+      # build and the upload.
+      - name: Build (sign and notarize the app)
+        if: matrix.platform == 'macos-latest'
+        working-directory: apps/desktop
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: >-
+          pnpm exec tauri build ${{ matrix.args }}
+          --config '{"bundle":{"macOS":{"hardenedRuntime":true}}}'
+
+      # A downloaded dmg that is not notarized itself is rejected by Gatekeeper, even when the app in
+      # it is.
+      - name: Notarize the dmg
+        if: matrix.platform == 'macos-latest'
+        id: dmg
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          # target/ comes back from the cache, so match the version and expect exactly one dmg.
+          shopt -s nullglob
+          dmgs=(target/universal-apple-darwin/release/bundle/dmg/*_"${VERSION}"_universal.dmg)
+          if [ ${#dmgs[@]} -ne 1 ]; then
+            echo "::error::expected exactly one dmg for ${VERSION}, found ${#dmgs[@]}: ${dmgs[*]}"
+            exit 1
+          fi
+          DMG="${dmgs[0]}"
+          # Judge by both the exit code and the status, and print the notary log before failing.
+          rc=0
+          result=$(xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" \
+            --wait --output-format json) || rc=$?
+          echo "$result"
+          status=$(echo "$result" | jq -r '.status // empty' 2>/dev/null || true)
+          if [ "$rc" -ne 0 ] || [ "$status" != "Accepted" ]; then
+            id=$(echo "$result" | jq -r '.id // empty' 2>/dev/null || true)
+            if [ -n "$id" ]; then
+              xcrun notarytool log "$id" \
+                --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" || true
+            fi
+            echo "::error::notarization of the dmg failed (exit ${rc}, status '${status:-none}')"
+            exit 1
+          fi
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          spctl --assess --type open --context context:primary-signature -vv "$DMG"
+          echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
+
+      # Uploaded by release id, after making sure it is still this run's draft: "Re-run failed jobs"
+      # reuses the saved id, and a later run may have taken the draft over (moving its target to that
+      # run's commit) or published it since.
+      - name: Upload the dmg to the draft release
+        if: matrix.platform == 'macos-latest'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ needs.draft.outputs.release_id }}
+          DMG: ${{ steps.dmg.outputs.dmg }}
+        run: |
+          state=$(gh api "repos/${GH_REPO}/releases/${RELEASE_ID}" --jq '"\(.draft) \(.target_commitish)"')
+          if [ "$state" != "true ${GITHUB_SHA}" ]; then
+            echo "::error::release ${RELEASE_ID} is no longer this run's draft (draft, target: ${state}); not uploading to it."
+            exit 1
+          fi
+          NAME=$(basename "$DMG")
+          export NAME
+          # A re-run finds the asset of the previous attempt, and a name can be uploaded only once.
+          for id in $(gh api "repos/${GH_REPO}/releases/${RELEASE_ID}/assets?per_page=100" \
+            --jq '.[] | select(.name == env.NAME) | .id'); do
+            gh api -X DELETE "repos/${GH_REPO}/releases/assets/${id}"
+            echo "Deleted the previous asset ${id} (${NAME})."
+          done
+          gh api -X POST "https://uploads.github.com/repos/${GH_REPO}/releases/${RELEASE_ID}/assets?name=${NAME}" \
+            -H "Content-Type: application/x-apple-diskimage" --input "$DMG" --jq '.browser_download_url'
+
+  # Publishes the draft only when every build succeeded; otherwise it stays a draft. The Homebrew tap
+  # (cyberneura/homebrew-tap) picks the new release up on its own schedule.
+  publish:
+    needs: [plan, draft, build]
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      # Decided again right before publishing (see scripts/release-decide.sh). --tag is sent with
+      # --target for the same reason as in the draft job.
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ needs.draft.outputs.release_id }}
+        run: |
+          VERSION=$(bash scripts/read-version.sh)
+          release=$(VERSION="$VERSION" bash scripts/release-decide.sh)
+          if [ "$release" != "true" ]; then
+            echo "::error::v${VERSION} should no longer be published (see the message above); leaving the draft as it is."
+            exit 1
+          fi
+          # A later run that took the draft over moved its target; its files are not this run's.
+          target=$(gh api "repos/${GH_REPO}/releases/${RELEASE_ID}" --jq '.target_commitish')
+          if [ "$target" != "${GITHUB_SHA}" ]; then
+            echo "::error::the draft now belongs to ${target}, not this run's ${GITHUB_SHA}; not publishing it."
+            exit 1
+          fi
+          gh release edit "v${VERSION}" --draft=false --latest --tag "v${VERSION}" --target "${GITHUB_SHA}"
