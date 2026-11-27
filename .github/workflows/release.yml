@@ -321,6 +321,22 @@ jobs:
       #
       # Every `uses:` in this job is pinned to a commit, not a tag: the job holds the Apple certificate,
       # and a moved tag would hand it to whoever moved it. Update by commit SHA as well.
+      # Same guard as the macOS upload: "Re-run failed jobs" reuses the saved release id, which a later
+      # run may have published since.
+      - name: Make sure the release is still a draft
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ needs.draft.outputs.release_id }}
+        run: |
+          draft=$(gh api "repos/${GH_REPO}/releases/${RELEASE_ID}" --jq '.draft')
+          if [ "$draft" != "true" ]; then
+            echo "::error::release ${RELEASE_ID} is no longer a draft; not uploading to it."
+            exit 1
+          fi
+
       - name: Build and upload to GitHub Release (draft)
         if: matrix.platform == 'windows-latest'
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
