@@ -194,6 +194,11 @@ jobs:
             gh api -X PATCH "repos/${GH_REPO}/releases/${id}" \
               -f tag_name="${TAG}" \
               -f target_commitish="${GITHUB_SHA}" --silent
+            # Files a failed run left behind were built from its commit, not this one.
+            for asset in $(gh api "repos/${GH_REPO}/releases/${id}/assets?per_page=100" --jq '.[].id'); do
+              gh api -X DELETE "repos/${GH_REPO}/releases/assets/${asset}"
+              echo "Deleted asset ${asset} left by an earlier run."
+            done
             echo "Reusing draft ${id} for ${TAG} (target set to ${GITHUB_SHA})."
           else
             id=$(gh api -X POST "repos/${GH_REPO}/releases" \
@@ -322,7 +327,7 @@ jobs:
       # Every `uses:` in this job is pinned to a commit, not a tag: the job holds the Apple certificate,
       # and a moved tag would hand it to whoever moved it. Update by commit SHA as well.
       # Same guard as the macOS upload: "Re-run failed jobs" reuses the saved release id, which a later
-      # run may have published since.
+      # run may have taken over (it moves the target to its own commit) or published since.
       - name: Make sure the release is still a draft
         if: matrix.platform == 'windows-latest'
         shell: bash
@@ -331,9 +336,9 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_ID: ${{ needs.draft.outputs.release_id }}
         run: |
-          draft=$(gh api "repos/${GH_REPO}/releases/${RELEASE_ID}" --jq '.draft')
-          if [ "$draft" != "true" ]; then
-            echo "::error::release ${RELEASE_ID} is no longer a draft; not uploading to it."
+          state=$(gh api "repos/${GH_REPO}/releases/${RELEASE_ID}" --jq '"\(.draft) \(.target_commitish)"')
+          if [ "$state" != "true ${GITHUB_SHA}" ]; then
+            echo "::error::release ${RELEASE_ID} is no longer this run's draft (draft, target: ${state}); not uploading to it."
             exit 1
           fi
 
@@ -403,8 +408,9 @@ jobs:
           spctl --assess --type open --context context:primary-signature -vv "$DMG"
           echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
 
-      # Uploaded by release id, after making sure it is still a draft: "Re-run failed jobs" reuses the
-      # saved id, and the version may have been published since.
+      # Uploaded by release id, after making sure it is still this run's draft: "Re-run failed jobs"
+      # reuses the saved id, and a later run may have taken the draft over (moving its target to that
+      # run's commit) or published it since.
       - name: Upload the dmg to the draft release
         if: matrix.platform == 'macos-latest'
         env:
@@ -413,9 +419,9 @@ jobs:
           RELEASE_ID: ${{ needs.draft.outputs.release_id }}
           DMG: ${{ steps.dmg.outputs.dmg }}
         run: |
-          draft=$(gh api "repos/${GH_REPO}/releases/${RELEASE_ID}" --jq '.draft')
-          if [ "$draft" != "true" ]; then
-            echo "::error::release ${RELEASE_ID} is no longer a draft; not uploading to it."
+          state=$(gh api "repos/${GH_REPO}/releases/${RELEASE_ID}" --jq '"\(.draft) \(.target_commitish)"')
+          if [ "$state" != "true ${GITHUB_SHA}" ]; then
+            echo "::error::release ${RELEASE_ID} is no longer this run's draft (draft, target: ${state}); not uploading to it."
             exit 1
           fi
           NAME=$(basename "$DMG")
@@ -432,7 +438,7 @@ jobs:
   # Publishes the draft only when every build succeeded; otherwise it stays a draft. The Homebrew tap
   # (cyberneura/homebrew-tap) picks the new release up on its own schedule.
   publish:
-    needs: [plan, build]
+    needs: [plan, draft, build]
     if: needs.plan.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -444,18 +450,24 @@ jobs:
         with:
           persist-credentials: false
 
-      # Decided again right before publishing (see scripts/release-decide.sh). --target moves the
-      # draft to this commit once more, since anyone may have edited it, and --tag is sent with it for
-      # the same reason as in the draft job.
+      # Decided again right before publishing (see scripts/release-decide.sh). --tag is sent with
+      # --target for the same reason as in the draft job.
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ needs.draft.outputs.release_id }}
         run: |
           VERSION=$(bash scripts/read-version.sh)
           release=$(VERSION="$VERSION" bash scripts/release-decide.sh)
           if [ "$release" != "true" ]; then
             echo "::error::v${VERSION} should no longer be published (see the message above); leaving the draft as it is."
+            exit 1
+          fi
+          # A later run that took the draft over moved its target; its files are not this run's.
+          target=$(gh api "repos/${GH_REPO}/releases/${RELEASE_ID}" --jq '.target_commitish')
+          if [ "$target" != "${GITHUB_SHA}" ]; then
+            echo "::error::the draft now belongs to ${target}, not this run's ${GITHUB_SHA}; not publishing it."
             exit 1
           fi
           gh release edit "v${VERSION}" --draft=false --latest --tag "v${VERSION}" --target "${GITHUB_SHA}"

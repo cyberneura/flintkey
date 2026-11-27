@@ -55,6 +55,17 @@ impl Watched {
     }
 }
 
+impl Watched {
+    /// Whether an event can change what the app loads. Windows also reports a change to the `commands` folder itself
+    /// whenever a file in it is written, hidden ones included; the files are reported on their own, so a modification
+    /// of the folder is not a change (its creation, removal or renaming still is).
+    pub fn concerns_event(&self, kind: &notify::EventKind, paths: &[PathBuf]) -> bool {
+        paths.iter().any(|path| {
+            self.concerns(path) && !(matches!(kind, notify::EventKind::Modify(_)) && path == &self.commands)
+        })
+    }
+}
+
 /// Starts watching `dir`, creating it and its `commands` folder if they are missing. `on_change` runs on a
 /// background thread after each burst of relevant changes. The watch stops when the returned watcher is dropped.
 pub fn start(dir: &Path, on_change: impl Fn() + Send + 'static) -> notify::Result<RecommendedWatcher> {
@@ -64,7 +75,7 @@ pub fn start(dir: &Path, on_change: impl Fn() + Send + 'static) -> notify::Resul
     let (sender, receiver) = mpsc::channel::<()>();
     let mut watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
         // An error (e.g. the event queue overflowed) may hide changes, so treat it as one.
-        let relevant = result.map_or(true, |event| event.paths.iter().any(|path| watched.concerns(path)));
+        let relevant = result.map_or(true, |event| watched.concerns_event(&event.kind, &event.paths));
         if relevant {
             let _ = sender.send(());
         }
@@ -86,6 +97,22 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Instant;
+
+    #[test]
+    fn a_modification_of_the_commands_folder_itself_is_not_a_change() {
+        // Arrange
+        use notify::EventKind;
+        use notify::event::{CreateKind, ModifyKind, RemoveKind};
+        let watched = Watched::new(Path::new("/config"));
+        let folder = [PathBuf::from("/config/commands")];
+        let file = [PathBuf::from("/config/commands/site.yaml")];
+
+        // Act / Assert
+        assert!(!watched.concerns_event(&EventKind::Modify(ModifyKind::Any), &folder));
+        assert!(watched.concerns_event(&EventKind::Remove(RemoveKind::Folder), &folder));
+        assert!(watched.concerns_event(&EventKind::Create(CreateKind::Folder), &folder));
+        assert!(watched.concerns_event(&EventKind::Modify(ModifyKind::Any), &file));
+    }
 
     #[test]
     fn only_files_the_app_loads_are_changes() {

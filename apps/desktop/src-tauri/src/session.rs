@@ -537,7 +537,8 @@ mod tests {
         let calculator = fixture
             .dir
             .path()
-            .join("Applications/Calculator.app")
+            .join("Applications")
+            .join("Calculator.app")
             .display()
             .to_string();
 
@@ -582,7 +583,8 @@ mod tests {
             fixture
                 .dir
                 .path()
-                .join("Applications/Calculator.app")
+                .join("Applications")
+                .join("Calculator.app")
                 .display()
                 .to_string()
         );
@@ -605,7 +607,8 @@ mod tests {
         let messenger = fixture
             .dir
             .path()
-            .join("Applications/Messenger.app")
+            .join("Applications")
+            .join("Messenger.app")
             .display()
             .to_string();
 
@@ -692,7 +695,9 @@ mod tests {
         let briefcase = fixture
             .dir
             .path()
-            .join("config/icons/briefcase.svg")
+            .join("config")
+            .join("icons")
+            .join("briefcase.svg")
             .display()
             .to_string();
 
