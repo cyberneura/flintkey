@@ -84,4 +84,71 @@ pub unsafe fn show(ns_window: *mut c_void, take_key: bool) {
             let _: () = msg_send![window, makeKeyWindow];
         }
     }
+    if take_key {
+        // A key window whose first responder is not the web view drops every key press; the page cannot notice,
+        // because nothing reaches it.
+        // SAFETY: the caller's guarantees; `web_view_in` only reads the view tree.
+        unsafe {
+            let content: *mut AnyObject = msg_send![window, contentView];
+            if let Some(web_view) = web_view_in(content) {
+                let _: Bool = msg_send![window, makeFirstResponder: web_view];
+            }
+        }
+    }
+}
+
+/// Whether the panel is the key window and its web view the first responder: whether key presses reach the page.
+///
+/// # Safety
+///
+/// `ns_window` must be a live window already passed to `convert`, and this must be called from the main thread.
+pub unsafe fn receives_keys(ns_window: *mut c_void) -> bool {
+    let window = ns_window.cast::<AnyObject>();
+    // SAFETY: NSWindow methods without arguments; `web_view_in` only reads the view tree.
+    unsafe {
+        let key: Bool = msg_send![window, isKeyWindow];
+        if !key.as_bool() {
+            return false;
+        }
+        let content: *mut AnyObject = msg_send![window, contentView];
+        let responder: *mut AnyObject = msg_send![window, firstResponder];
+        match web_view_in(content) {
+            // WKWebView hands first responder to its own subviews, so any view inside it counts.
+            Some(web_view) => {
+                !responder.is_null() && {
+                    let is_view: Bool = msg_send![responder, isKindOfClass: class!(NSView)];
+                    is_view.as_bool() && {
+                        let inside: Bool = msg_send![responder, isDescendantOf: web_view];
+                        inside.as_bool()
+                    }
+                }
+            }
+            None => true,
+        }
+    }
+}
+
+/// The first WKWebView in the view tree under `view`.
+///
+/// # Safety
+///
+/// `view` must be null or a live NSView, on the main thread.
+unsafe fn web_view_in(view: *mut AnyObject) -> Option<*mut AnyObject> {
+    if view.is_null() {
+        return None;
+    }
+    let class = AnyClass::get(c"WKWebView")?;
+    // SAFETY: NSView methods; the subviews array is only read while it is alive.
+    unsafe {
+        let matches: Bool = msg_send![view, isKindOfClass: class];
+        if matches.as_bool() {
+            return Some(view);
+        }
+        let subviews: *mut AnyObject = msg_send![view, subviews];
+        let count: usize = msg_send![subviews, count];
+        (0..count).find_map(|index| {
+            let child: *mut AnyObject = msg_send![subviews, objectAtIndex: index];
+            web_view_in(child)
+        })
+    }
 }

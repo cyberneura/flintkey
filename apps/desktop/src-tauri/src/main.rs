@@ -371,9 +371,53 @@ fn show_launcher_on_main(app: &AppHandle, focus: Focus) {
         if visible { showing.id() } else { showing.begin() }
     };
     let _ = window.emit(EVENT_SHOWN, id);
+    #[cfg(target_os = "macos")]
+    if focus == Focus::Take && shows_without_key(app) {
+        make_sure_keys_arrive(app, id, KEY_RETRIES);
+    }
     // The files and the app folders are read after the window is shown and off the main thread, which delivers
     // the key presses typed meanwhile. The page shows the previous list until the new one is loaded.
     reload_in_background(app, EVENT_REFRESHED);
+}
+
+/// How many times a showing checks that key presses reach the page, a beat apart.
+#[cfg(target_os = "macos")]
+const KEY_RETRIES: u32 = 5;
+#[cfg(target_os = "macos")]
+const KEY_CHECK_DELAY: std::time::Duration = std::time::Duration::from_millis(80);
+
+/// Checks, once the event loop has run, that the panel became the key window with the web view as first responder,
+/// and asks again when it did not. Right after switching apps, macOS sometimes leaves a just-shown panel without
+/// key status (or another responder in front of the web view), and then every key press is dropped until the
+/// window is shown again. Stops when the showing `id` is over.
+#[cfg(target_os = "macos")]
+fn make_sure_keys_arrive(app: &AppHandle, id: u64, retries: u32) {
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(KEY_CHECK_DELAY);
+        let main = handle.clone();
+        let _ = handle.run_on_main_thread(move || {
+            let current = main.state::<AppState>().showing.lock().unwrap().id();
+            let Some(window) = main.get_webview_window(LAUNCHER) else {
+                return;
+            };
+            if current != id || !window.is_visible().unwrap_or(false) {
+                return;
+            }
+            let Ok(ns_window) = window.ns_window() else {
+                return;
+            };
+            // SAFETY: this window became a panel at startup and stays open until the app exits. Main thread.
+            if unsafe { panel::receives_keys(ns_window) } {
+                return;
+            }
+            // SAFETY: as above.
+            unsafe { panel::show(ns_window, true) };
+            if retries > 1 {
+                make_sure_keys_arrive(&main, id, retries - 1);
+            }
+        });
+    });
 }
 
 /// Whether the window can be shown without taking keyboard input. Only on macOS, when the panel conversion worked.
