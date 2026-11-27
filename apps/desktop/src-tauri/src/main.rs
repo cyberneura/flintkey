@@ -25,7 +25,7 @@ use serde::Serialize;
 use session::{IconRef, Row, Session};
 use showing::Showing;
 #[cfg(target_os = "macos")]
-use showing::{KeyCheck, key_check};
+use showing::{KeyCheck, WatchStep, key_check, watch_step};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -70,9 +70,6 @@ struct AppState {
     icons: icons::Icons,
     /// Whether the window is the target of keyboard input.
     has_key: AtomicBool,
-    /// The showing whose Siri input watcher is running (see `keep_siri_away`). 0 for none.
-    #[cfg(target_os = "macos")]
-    siri_watch: std::sync::atomic::AtomicU64,
     /// Whether the window could be turned into a panel that receives keyboard input.
     #[cfg(target_os = "macos")]
     panel: AtomicBool,
@@ -396,9 +393,8 @@ fn show_launcher_on_main(app: &AppHandle, focus: Focus) {
     #[cfg(target_os = "macos")]
     if focus == Focus::Take && shows_without_key(app) {
         make_sure_keys_arrive(app, id, KEY_RETRIES);
-        // One watcher per showing. Showing the visible window again keeps the showing, which may or may not have
-        // one already (a showing that started for a notice did not take the keyboard).
-        if app.state::<AppState>().siri_watch.swap(id, Ordering::SeqCst) != id {
+        let start = app.state::<AppState>().showing.lock().unwrap().take_watch();
+        if start {
             keep_siri_away(app, id);
         }
     }
@@ -503,19 +499,15 @@ fn keep_siri_away(app: &AppHandle, id: u64) {
             }
             let main = handle.clone();
             let _ = handle.run_on_main_thread(move || {
-                if main.state::<AppState>().showing.lock().unwrap().id() != id {
+                let current = main.state::<AppState>().showing.lock().unwrap().id();
+                // SAFETY: main thread.
+                let up = unsafe { panel::siri_input_window_up() };
+                if watch_step(id, current, up) != WatchStep::Retake {
                     return;
                 }
-                let Some(window) = main.get_webview_window(LAUNCHER) else {
-                    return;
-                };
-                if let Ok(ns_window) = window.ns_window() {
+                if let Some(Ok(ns_window)) = main.get_webview_window(LAUNCHER).map(|window| window.ns_window()) {
                     // SAFETY: this window became a panel at startup and stays open until the app exits. Main thread.
-                    unsafe {
-                        if panel::siri_input_window_up() {
-                            panel::show(ns_window, true);
-                        }
-                    }
+                    unsafe { panel::show(ns_window, true) };
                 }
             });
         }
@@ -704,8 +696,6 @@ fn main() {
         showing: Mutex::new(Showing::default()),
         icons: icons::Icons::new(state_dir.join("icon-cache"), config_dir.clone()),
         has_key: AtomicBool::new(false),
-        #[cfg(target_os = "macos")]
-        siri_watch: std::sync::atomic::AtomicU64::new(0),
         #[cfg(target_os = "macos")]
         panel: AtomicBool::new(false),
     };
