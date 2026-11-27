@@ -3,6 +3,7 @@
 // Do not open a console window on Windows in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod diag;
 mod forms;
 mod hotkeys;
 mod icons;
@@ -24,7 +25,7 @@ use serde::Serialize;
 use session::{IconRef, Row, Session};
 use showing::Showing;
 #[cfg(target_os = "macos")]
-use showing::{KeyCheck, key_check};
+use showing::{KeyCheck, WatchStep, key_check, watch_step};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -366,6 +367,22 @@ fn show_launcher_on_main(app: &AppHandle, focus: Focus) {
         None => {}
     }
     present(app, &window, focus);
+    log_window(&window, &format!("shown focus={focus:?} was_visible={visible}"));
+    #[cfg(target_os = "macos")]
+    if diag::enabled() {
+        for delay in [0, 1000, 3000] {
+            let handle = app.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(delay));
+                let _ = handle.clone().run_on_main_thread(move || {
+                    let current = handle.state::<AppState>().showing.lock().unwrap().id();
+                    // SAFETY: main thread.
+                    let state = unsafe { format!("{} {}", panel::system_state(), panel::app_windows()) };
+                    diag::log(&format!("after {delay}ms showing={current} {state}"));
+                });
+            });
+        }
+    }
     // Refreshing an already visible window continues the same showing. Keep its number.
     let state = app.state::<AppState>();
     let id = {
@@ -376,6 +393,10 @@ fn show_launcher_on_main(app: &AppHandle, focus: Focus) {
     #[cfg(target_os = "macos")]
     if focus == Focus::Take && shows_without_key(app) {
         make_sure_keys_arrive(app, id, KEY_RETRIES);
+        let start = app.state::<AppState>().showing.lock().unwrap().take_watch();
+        if start {
+            keep_siri_away(app, id);
+        }
     }
     // The files and the app folders are read after the window is shown and off the main thread, which delivers
     // the key presses typed meanwhile. The page shows the previous list until the new one is loaded.
@@ -408,14 +429,88 @@ fn make_sure_keys_arrive(app: &AppHandle, id: u64, retries: u32) {
             let current = main.state::<AppState>().showing.lock().unwrap().id();
             // SAFETY: this window became a panel at startup and stays open until the app exits. Main thread.
             let receives_keys = unsafe { panel::receives_keys(ns_window) };
+            log_window(&window, &format!("key check showing={id} current={current}"));
             if let KeyCheck::Retake { retries_left } = key_check(id, current, receives_keys, retries) {
                 // SAFETY: as above.
                 unsafe { panel::show(ns_window, true) };
+                log_window(&window, "retook the keyboard");
                 if retries_left > 0 {
                     make_sure_keys_arrive(&main, id, retries_left);
                 }
             }
         });
+    });
+}
+
+/// Writes the window's keyboard state to the focus log, when it is enabled.
+fn log_window(window: &WebviewWindow, event: &str) {
+    if !diag::enabled() {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    if let Ok(ns_window) = window.ns_window()
+        && window.state::<AppState>().panel.load(Ordering::Relaxed)
+    {
+        // SAFETY: this window became a panel at startup and stays open until the app exits. Main thread.
+        let state = unsafe { panel::describe(ns_window) };
+        diag::log(&format!("{event} {state}"));
+        return;
+    }
+    diag::log(&format!("{event} focused={:?}", window.is_focused()));
+}
+
+/// Whether the focus log is on, so the page sends lines only then.
+#[tauri::command]
+fn focus_log_enabled() -> bool {
+    diag::enabled()
+}
+
+/// A line from the page for the focus log. The page sends only fixed event descriptions; anything outside a small ASCII
+/// set is replaced, so typed text cannot reach the file even by mistake.
+#[tauri::command]
+fn focus_log(window: WebviewWindow, message: String) {
+    let message: String = message
+        .chars()
+        .take(200)
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, ' ' | '=' | '_') {
+                c
+            } else {
+                '?'
+            }
+        })
+        .collect();
+    log_window(&window, &format!("page {message}"));
+}
+
+#[cfg(target_os = "macos")]
+const SIRI_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// While showing `id` lasts, closes any Siri input window that comes up and takes the keyboard back. macOS 27 can
+/// put one up in the app at any moment (a Siri mark at the text field); while it is there, every key goes to it.
+#[cfg(target_os = "macos")]
+fn keep_siri_away(app: &AppHandle, id: u64) {
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(SIRI_CHECK_INTERVAL);
+            if handle.state::<AppState>().showing.lock().unwrap().id() != id {
+                return;
+            }
+            let main = handle.clone();
+            let _ = handle.run_on_main_thread(move || {
+                let current = main.state::<AppState>().showing.lock().unwrap().id();
+                // SAFETY: main thread.
+                let up = unsafe { panel::siri_input_window_up() };
+                if watch_step(id, current, up) != WatchStep::Retake {
+                    return;
+                }
+                if let Some(Ok(ns_window)) = main.get_webview_window(LAUNCHER).map(|window| window.ns_window()) {
+                    // SAFETY: this window became a panel at startup and stays open until the app exits. Main thread.
+                    unsafe { panel::show(ns_window, true) };
+                }
+            });
+        }
     });
 }
 
@@ -461,6 +556,7 @@ fn hide_launcher(app: &AppHandle) {
         return;
     }
     let _ = window.hide();
+    diag::log("hidden");
     // Without the panel, Flintkey is the frontmost app. Hiding the window alone does not return
     // keyboard input to the previous app.
     #[cfg(target_os = "macos")]
@@ -592,6 +688,7 @@ fn main() {
     let home = std::env::home_dir().expect("the user has a home directory");
     let config_dir = paths::config_dir().expect("the user has a home directory");
     let state_dir = paths::state_dir().expect("the user has a home directory");
+    diag::init(&state_dir);
     let state = AppState {
         session: Mutex::new(Session::new(config_dir.clone(), &state_dir, home, Os::current())),
         hotkeys: Mutex::new(Registry::default()),
@@ -624,6 +721,8 @@ fn main() {
         )
         .manage(state)
         .invoke_handler(tauri::generate_handler![
+            focus_log,
+            focus_log_enabled,
             open_session,
             refresh,
             search,
@@ -693,10 +792,12 @@ fn main() {
             // Everything below is about the launcher.
             _ if window.label() != LAUNCHER => {}
             WindowEvent::Focused(true) => {
+                diag::log(&format!("focused(true) is_focused={:?}", window.is_focused()));
                 let has_key = holds_key_now(window, true);
                 window.state::<AppState>().has_key.store(has_key, Ordering::SeqCst);
             }
             WindowEvent::Focused(false) => {
+                diag::log(&format!("focused(false) is_focused={:?}", window.is_focused()));
                 // Hide only when a window that had keyboard input no longer has it. A window shown for a notice
                 // never had keyboard input, so it does not hide here.
                 let had_key = window.state::<AppState>().has_key.load(Ordering::SeqCst);

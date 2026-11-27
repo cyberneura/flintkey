@@ -4,7 +4,7 @@ members = ["crates/*", "apps/desktop/src-tauri"]
 exclude = ["spikes"]
 
 [workspace.package]
-version = "0.10.2"
+version = "0.10.3"
 edition = "2024"
 publish = false
 license = "MIT"

@@ -11,6 +11,8 @@ pub struct Showing {
     id: u64,
     /// Whether the current showing still accepts a run. One run per showing.
     accepting: bool,
+    /// The showing that has a Siri input watcher (see `watch_step`). 0 for none.
+    watched: u64,
 }
 
 impl Showing {
@@ -47,6 +49,18 @@ impl Showing {
     pub fn end(&mut self) {
         self.id = 0;
         self.accepting = false;
+        self.watched = 0;
+    }
+
+    /// Whether to start a Siri input watcher for the current showing: only if it has none yet. A showing that began
+    /// for a notice did not take the keyboard and has none; it gets one when it does.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub fn take_watch(&mut self) -> bool {
+        if self.id == 0 || self.watched == self.id {
+            return false;
+        }
+        self.watched = self.id;
+        true
     }
 }
 
@@ -74,9 +88,57 @@ pub fn key_check(checking: u64, current: u64, receives_keys: bool, retries: u32)
     }
 }
 
+/// What a Siri input watcher does on each tick.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatchStep {
+    /// Its showing is over.
+    Stop,
+    /// A Siri input window is up: hide it and take the keyboard back, then keep watching.
+    Retake,
+    /// Nothing to do; keep watching.
+    Wait,
+}
+
+/// The tick of a watcher started for showing `watching`. `current` is the current showing's number (0 while hidden).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn watch_step(watching: u64, current: u64, siri_input_window_up: bool) -> WatchStep {
+    if watching != current {
+        WatchStep::Stop
+    } else if siri_input_window_up {
+        WatchStep::Retake
+    } else {
+        WatchStep::Wait
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_showing_gets_one_watcher_even_if_it_began_for_a_notice() {
+        // Arrange
+        let mut showing = Showing::default();
+
+        // Act / Assert
+        assert!(!showing.take_watch(), "hidden");
+        showing.begin(); // shown for a notice: no watcher is asked for
+        assert!(showing.take_watch(), "the notice showing takes the keyboard");
+        assert!(!showing.take_watch(), "shown again while visible");
+        showing.end();
+        showing.begin();
+        assert!(showing.take_watch(), "a new showing");
+    }
+
+    #[test]
+    fn a_watcher_retakes_only_while_its_showing_lasts() {
+        // Act / Assert
+        assert_eq!(watch_step(2, 2, true), WatchStep::Retake);
+        assert_eq!(watch_step(2, 2, false), WatchStep::Wait);
+        assert_eq!(watch_step(2, 0, true), WatchStep::Stop, "hidden");
+        assert_eq!(watch_step(2, 3, true), WatchStep::Stop, "shown again");
+    }
 
     #[test]
     fn the_key_check_retakes_the_keyboard_only_while_its_showing_lasts_and_keys_do_not_arrive() {

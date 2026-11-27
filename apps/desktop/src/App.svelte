@@ -71,6 +71,16 @@
     }
   });
 
+  // Where keyboard input goes, written to the app's focus log when it is turned on. Never key values.
+  let tracing = false;
+  function trace(message: string) {
+    if (tracing) invoke('focus_log', { message }).catch(() => {});
+  }
+  const focusTarget = () => {
+    const element = document.activeElement;
+    return element === input ? 'input' : (element?.tagName.toLowerCase() ?? 'none');
+  };
+
   async function openSession() {
     // Focus before anything is fetched: a key pressed before the input has focus is lost, and the list may take
     // a moment (the files are read after the window appears).
@@ -116,7 +126,10 @@
     }
   }
 
+  let keydowns = 0;
   function onKeydown(event: KeyboardEvent) {
+    keydowns += 1;
+    trace(`keydown target=${focusTarget()} composing=${event.isComposing} has_focus=${document.hasFocus()}`);
     // Clicking an error message or similar takes focus from the input. Return it on the next key.
     // Not for modifier shortcuts such as copy (returning focus would clear the selection).
     if (document.activeElement !== input && !event.metaKey && !event.ctrlKey) {
@@ -151,6 +164,7 @@
   onMount(() => {
     const unlisten = [
       listen<number>('launcher-shown', (event) => {
+        trace(`shown event target=${focusTarget()} has_focus=${document.hasFocus()}`);
         showing = event.payload;
         // Icons that failed while hidden (offline, for instance) get another chance; the row keeps its type icon
         // until they load.
@@ -171,12 +185,29 @@
       }),
       // Clear on hide so the previous input does not flash when the window next appears.
       listen('launcher-hidden', () => {
+        trace(`hidden after ${keydowns} keydowns`);
+        keydowns = 0;
         showing = 0;
         query = '';
         selected = 0;
         search('');
+        // The window takes the keyboard before `launcher-shown` arrives. Keys typed in between must already find
+        // the input: an input method that starts converting with no text field focused can get stuck until the
+        // window is shown again.
+        input?.focus();
       }),
     ];
+    invoke<boolean>('focus_log_enabled').then((enabled) => {
+      tracing = enabled;
+      if (!enabled) return;
+      for (const name of ['focus', 'blur']) {
+        window.addEventListener(name, () => trace(`window ${name} target=${focusTarget()}`));
+        input?.addEventListener(name, () => trace(`input ${name}`));
+      }
+      input?.addEventListener('compositionstart', () => trace('compositionstart'));
+      input?.addEventListener('compositionend', () => trace('compositionend'));
+      input?.addEventListener('input', () => trace('input event'));
+    });
     openSession();
     return () => unlisten.forEach((pending) => pending.then((stop) => stop()));
   });
@@ -200,6 +231,7 @@
       autocorrect="off"
       autocapitalize="off"
       spellcheck="false"
+      writingsuggestions="false"
     />
 
     {#if rows.length > 0}
