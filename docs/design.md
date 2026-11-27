@@ -111,6 +111,21 @@ a normal window cannot receive key input even when shown. Tauri cannot create an
 is swapped at runtime. On an OS where NSPanel and NSWindow differ in size, the class is not swapped and the window works as a normal window
 (in that case the app is brought to the front when showing, and the whole app is hidden when hiding).
 
+Keeping key input on the panel (macOS):
+
+- When the panel is shown, the web view is made its first responder, and the page keeps the text input focused even while
+  hidden, so keys typed right after the hotkey land in the input.
+- macOS 27 can put a Siri input window (`NSCampoLightweightUIHostWindow`, shown as a Siri mark at the text field) inside the
+  app. While it is up, every key goes to it, even though the panel still reports itself as the key window. Showing the panel
+  hides it, and while the panel is up it is checked for every 250 ms and hidden again.
+- After showing, the panel checks that it is the key window with the web view as first responder and no Siri input window up,
+  and takes the keyboard again if not (a few times, a beat apart).
+
+Creating an empty file `debug-focus` in the state folder (read at startup, so restart Flintkey after creating or deleting
+it) turns on a log of where keyboard input goes (`focus.log` in the same
+folder): window and first-responder state, the frontmost app, Secure Input, the app's windows, and that a key arrived.
+Key values are never written.
+
 The position calculation (`apps/desktop/src-tauri/src/placement.rs`) has different coordinate systems on each OS:
 
 | OS | Coordinates consistent across the whole screen | Values returned by the window API |
