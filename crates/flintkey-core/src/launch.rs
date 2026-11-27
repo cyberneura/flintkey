@@ -368,8 +368,10 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     struct FailingSecrets;
 
+    #[cfg(unix)]
     impl SecretResolver for FailingSecrets {
         fn resolve(&self, references: &[String]) -> Result<Vec<String>, SecretError> {
             if references.is_empty() {
@@ -381,8 +383,10 @@ mod tests {
     }
 
     /// A resolver that breaks the contract by returning no values however many references there are.
+    #[cfg(unix)]
     struct ForgetfulSecrets;
 
+    #[cfg(unix)]
     impl SecretResolver for ForgetfulSecrets {
         fn resolve(&self, _: &[String]) -> Result<Vec<String>, SecretError> {
             Ok(Vec::new())
