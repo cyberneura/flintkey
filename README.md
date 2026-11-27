@@ -12,6 +12,18 @@ System Settings, the screen saver, locking the screen, restarting, logging out a
 Rows show the command's own icon, the site's favicon or app's icon, the tag's icon, or a default icon for the type.
 There is no plugin support yet.
 
+## Installing
+
+macOS, with [Homebrew](https://brew.sh):
+
+```shell
+brew install --cask cyberneura/tap/flintkey
+```
+
+Windows: download the installer (`Flintkey_<version>_x64-setup.exe`) from
+[Releases](https://github.com/cyberneura/flintkey/releases). It is not signed, so SmartScreen asks before running it.
+The Windows build is made by CI but has not been tried on a real Windows machine yet.
+
 ## Example settings
 
 `~/.config/flintkey/commands/deploy-blog.yaml`:
@@ -59,6 +71,17 @@ A running Flintkey is not stopped, so quit it from the menu bar and open it agai
 
 If you use [j-menu](https://github.com/cyberneura/j-menu), the `j` menu has Tauri dev and Local deploy.
 
+### Releasing
+
+Raise the version in both `Cargo.toml` (`[workspace.package]`) and `apps/desktop/package.json`, and merge it into
+`main`. `.github/workflows/release.yml` sees a version that has not been released, runs the tests on macOS and
+Windows, builds a signed and notarized universal dmg and an NSIS installer, and publishes them as one release.
+The Homebrew tap picks the new version up within the hour.
+
+After adding or upgrading dependencies, run `scripts/generate-third-party-notices.sh` (needs `cargo install
+cargo-about --locked --features cli`) and commit `THIRD-PARTY-NOTICES.txt`; a test fails when a direct dependency is
+missing from it.
+
 ### Trying it from the command line
 
 ```shell
@@ -81,3 +104,7 @@ registered without an error (Flintkey cannot detect the overlap). Disable the Al
 | `apps/desktop` | Desktop app (Tauri 2 + Svelte 5 + Tailwind 4) |
 | `docs` | Design |
 | `spikes` | Experiments behind design decisions (YAML editing, UI engine comparison). Not part of the product |
+
+## License
+
+MIT. See [LICENSE](LICENSE). The licenses of the bundled libraries are in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).

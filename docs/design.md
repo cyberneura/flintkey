@@ -16,10 +16,12 @@ the configuration is kept as files, can be shared across machines with Git, and 
 | Widgets (above the launcher window) | Not implemented |
 | Settings window (general settings, launcher hotkey, commands) | Implemented |
 | Plugin system, development-starter plugin | Not implemented |
+| Release builds (signed and notarized macOS dmg, Homebrew cask; unsigned Windows NSIS installer) | Implemented |
 
 Not yet confirmed on real hardware:
 
-- All Windows behavior (running scripts with PowerShell, Windows Terminal, launching apps).
+- All Windows behavior (running scripts with PowerShell, Windows Terminal, launching apps), including the released
+  installer: CI only shows that it builds and that the tests pass on Windows.
   The assembled command lines are fixed by tests, but they have never been run on a real Windows machine.
 - Resolving real 1Password secrets. The input and output format of `op inject` has been confirmed,
   and resolution itself is tested with a stand-in `op`.

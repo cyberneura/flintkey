@@ -42,6 +42,10 @@ Apple notarization and stapling, puts it in `/Applications`. Notarization uses `
 (override with `NOTARY_PROFILE`); on failure the existing app is not replaced. `DEST_DIR` changes the destination.
 Signing is fixed to Cyberneura's Developer ID, and `notarize-app.sh` checks it before notarizing.
 
+Releases are made by `.github/workflows/release.yml` when `main` carries a version that has not been released (raise it in
+both `Cargo.toml` and `apps/desktop/package.json`; `scripts/read-version.sh` refuses a mismatch). After changing
+dependencies, regenerate `THIRD-PARTY-NOTICES.txt` with `scripts/generate-third-party-notices.sh`.
+
 ## Rules
 
 - Keep the core testable without a window. Make OS-specific behavior a "pure function that takes the machine's
