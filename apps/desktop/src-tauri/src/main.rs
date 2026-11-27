@@ -70,6 +70,9 @@ struct AppState {
     icons: icons::Icons,
     /// Whether the window is the target of keyboard input.
     has_key: AtomicBool,
+    /// The showing whose Siri input watcher is running (see `keep_siri_away`). 0 for none.
+    #[cfg(target_os = "macos")]
+    siri_watch: std::sync::atomic::AtomicU64,
     /// Whether the window could be turned into a panel that receives keyboard input.
     #[cfg(target_os = "macos")]
     panel: AtomicBool,
@@ -393,8 +396,9 @@ fn show_launcher_on_main(app: &AppHandle, focus: Focus) {
     #[cfg(target_os = "macos")]
     if focus == Focus::Take && shows_without_key(app) {
         make_sure_keys_arrive(app, id, KEY_RETRIES);
-        // One watcher per showing: showing the visible window again keeps the showing, and its watcher.
-        if !visible {
+        // One watcher per showing. Showing the visible window again keeps the showing, which may or may not have
+        // one already (a showing that started for a notice did not take the keyboard).
+        if app.state::<AppState>().siri_watch.swap(id, Ordering::SeqCst) != id {
             keep_siri_away(app, id);
         }
     }
@@ -700,6 +704,8 @@ fn main() {
         showing: Mutex::new(Showing::default()),
         icons: icons::Icons::new(state_dir.join("icon-cache"), config_dir.clone()),
         has_key: AtomicBool::new(false),
+        #[cfg(target_os = "macos")]
+        siri_watch: std::sync::atomic::AtomicU64::new(0),
         #[cfg(target_os = "macos")]
         panel: AtomicBool::new(false),
     };
